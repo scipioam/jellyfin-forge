@@ -10,5 +10,14 @@
     <PackageReference Include="Jellyfin.Controller" Version="12.1.0" ExcludeAssets="runtime" />
     <PackageReference Include="Jellyfin.Model" Version="12.1.0" ExcludeAssets="runtime" />
     <EmbeddedResource Include="Configuration/configPage.html" />
+    <EmbeddedResource Include="Web/bootstrap.js">
+      <LogicalName>Jellyfin.Plugin.Danmuku.Web.bootstrap.js</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Web/danmuku.js">
+      <LogicalName>Jellyfin.Plugin.Danmuku.Web.danmuku.js</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Web/danmuku.css">
+      <LogicalName>Jellyfin.Plugin.Danmuku.Web.danmuku.css</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
 </Project>

@@ -2,7 +2,7 @@
 <html lang="en">
 <head><meta charset="utf-8"><title>Danmuku</title></head>
 <body>
-<div id="DanmukuConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button">
+<div id="DanmukuConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-checkbox,emby-button">
     <div data-role="content"><div class="content-primary">
         <h2>Danmuku</h2>
         <p>Independent danmuku management for Jellyfin. Bootstrap configuration only.</p>
@@ -10,6 +10,12 @@
             <div class="inputContainer">
                 <label class="inputLabel" for="DanmukuInstanceLabel">Instance label</label>
                 <input is="emby-input" id="DanmukuInstanceLabel" type="text" />
+            </div>
+            <div class="checkboxContainer">
+                <label>
+                    <input is="emby-checkbox" type="checkbox" id="DanmukuEnableWebSupport" />
+                    <span>Enable Jellyfin Web danmuku support</span>
+                </label>
             </div>
             <p id="DanmukuError" role="alert"></p>
             <button is="emby-button" type="submit" class="raised button-submit block"><span>Save</span></button>
@@ -28,6 +34,7 @@
             Dashboard.showLoadingMsg();
             ApiClient.getPluginConfiguration(pluginId).then(function (config) {
                 page.querySelector('#DanmukuInstanceLabel').value = config.InstanceLabel;
+                page.querySelector('#DanmukuEnableWebSupport').checked = config.EnableWebSupport === true;
                 Dashboard.hideLoadingMsg();
             }).catch(failed);
         });
@@ -37,6 +44,7 @@
             Dashboard.showLoadingMsg();
             ApiClient.getPluginConfiguration(pluginId).then(function (config) {
                 config.InstanceLabel = page.querySelector('#DanmukuInstanceLabel').value;
+                config.EnableWebSupport = page.querySelector('#DanmukuEnableWebSupport').checked;
                 return ApiClient.updatePluginConfiguration(pluginId, config);
             }).then(function (result) {
                 Dashboard.processPluginConfigurationUpdateResult(result);

@@ -1,0 +1,15 @@
+{
+  "name": "jellyfin-forge-browser-tests",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Browser integration tests for Jellyfin Forge plugins",
+  "scripts": {
+    "test": "playwright test",
+    "test:chromium": "playwright test --project=chromium",
+    "test:firefox": "playwright test --project=firefox",
+    "install-browsers": "playwright install chromium firefox"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.58.2"
+  }
+}
