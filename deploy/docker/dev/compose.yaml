@@ -6,7 +6,21 @@ services:
     ports:
       - "127.0.0.1:18096:8096"
     volumes:
-      - ./config:/config
-      - ./cache:/cache
-      - ./media:/media:ro
+      # Paths are relative to this compose.yaml; edit these directories on the host.
+      - type: bind
+        source: ./config
+        target: /config
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./cache
+        target: /cache
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./media
+        target: /media
+        read_only: true
+        bind:
+          create_host_path: false
     restart: "no"

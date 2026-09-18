@@ -1,6 +1,6 @@
 # Synology 部署说明
 
-计划目标是 DSM 7.4+；目前未在 Synology 实机或原生 SPK 上验证。已验证的标准路径是 Ubuntu Docker + 官方 Jellyfin 12.1 镜像。不要将宿主系统版本等同于 Jellyfin Server 兼容性。
+计划目标是 DSM 7.4+；目前未在 Synology 实机或原生 SPK 上验证。初始化验证覆盖 Docker + 官方 Jellyfin 12.1 镜像，结果见 [初始化报告](../../docs/bootstrap-report.md)。不要将宿主系统版本等同于 Jellyfin Server 兼容性。
 
 ## Docker / Container Manager
 
