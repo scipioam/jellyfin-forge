@@ -1,0 +1,46 @@
+name: Build and smoke test
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  standalone:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        plugin: [danmuku, agentbridge]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: ./build/build.sh "${{ matrix.plugin }}"
+      - run: ./build/test.sh "${{ matrix.plugin }}"
+      - run: ./build/package.sh "${{ matrix.plugin }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jellyfin-plugin-${{ matrix.plugin }}
+          path: |
+            artifacts/jellyfin-plugin-${{ matrix.plugin }}-*.zip
+            artifacts/jellyfin-plugin-${{ matrix.plugin }}-*.sha256
+          if-no-files-found: error
+  smoke:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: ./build/build.sh
+      - run: ./build/smoke-test.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-results
+          path: |
+            artifacts/smoke/**/result.json
+            artifacts/smoke/**/server.log
+            artifacts/smoke/results.json

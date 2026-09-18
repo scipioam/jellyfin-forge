@@ -55,3 +55,36 @@ CodeCoverage/
 *.VisualState.xml
 TestResult.xml
 nunit-*.xml
+
+# Isolated Jellyfin instances (keep directory placeholders only)
+/deploy/docker/dev/config/*
+!/deploy/docker/dev/config/.gitkeep
+/deploy/docker/dev/cache/*
+!/deploy/docker/dev/cache/.gitkeep
+/deploy/docker/dev/media/*
+!/deploy/docker/dev/media/.gitkeep
+__pycache__/
+
+# Local tools and Python bytecode
+node_modules/
+.venv/
+venv/
+*.py[cod]
+
+# Developer-specific IDE / OS state
+.vs/
+.idea/
+*.user
+*.suo
+.DS_Store
+Thumbs.db
+
+# Local environment files (keep sanitized examples)
+.env.*
+!.env.example
+!.env.sample
+
+# Test and coverage output
+coverage/
+playwright-report/
+test-results/

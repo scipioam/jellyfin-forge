@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>AgentBridge</title></head>
+<body>
+<div id="AgentBridgeConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button">
+    <div data-role="content"><div class="content-primary">
+        <h2>AgentBridge</h2>
+        <p>Stable Jellyfin contracts for external agents; no AI inference. Bootstrap configuration only.</p>
+        <form id="AgentBridgeConfigForm">
+            <div class="inputContainer">
+                <label class="inputLabel" for="AgentBridgeInstanceLabel">Instance label</label>
+                <input is="emby-input" id="AgentBridgeInstanceLabel" type="text" />
+            </div>
+            <p id="AgentBridgeError" role="alert"></p>
+            <button is="emby-button" type="submit" class="raised button-submit block"><span>Save</span></button>
+        </form>
+    </div></div>
+    <script>
+    (function () {
+        var page = document.querySelector('#AgentBridgeConfigPage');
+        var pluginId = '8c8f013d-21b4-467c-8dac-c6446b97c0ea';
+        function failed() {
+            Dashboard.hideLoadingMsg();
+            page.querySelector('#AgentBridgeError').textContent = 'Unable to load or save configuration. Please retry.';
+        }
+        page.addEventListener('pageshow', function () {
+            page.querySelector('#AgentBridgeError').textContent = '';
+            Dashboard.showLoadingMsg();
+            ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+                page.querySelector('#AgentBridgeInstanceLabel').value = config.InstanceLabel;
+                Dashboard.hideLoadingMsg();
+            }).catch(failed);
+        });
+        page.querySelector('form').addEventListener('submit', function (event) {
+            event.preventDefault();
+            page.querySelector('#AgentBridgeError').textContent = '';
+            Dashboard.showLoadingMsg();
+            ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+                config.InstanceLabel = page.querySelector('#AgentBridgeInstanceLabel').value;
+                return ApiClient.updatePluginConfiguration(pluginId, config);
+            }).then(function (result) {
+                Dashboard.processPluginConfigurationUpdateResult(result);
+            }).catch(failed);
+        });
+    }());
+    </script>
+</div>
+</body>
+</html>
