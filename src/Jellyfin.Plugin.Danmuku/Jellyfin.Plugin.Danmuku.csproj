@@ -9,6 +9,7 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <PackageReference Include="Jellyfin.Controller" Version="12.1.0" ExcludeAssets="runtime" />
     <PackageReference Include="Jellyfin.Model" Version="12.1.0" ExcludeAssets="runtime" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
     <EmbeddedResource Include="Configuration/configPage.html" />
     <EmbeddedResource Include="Web/bootstrap.js">
       <LogicalName>Jellyfin.Plugin.Danmuku.Web.bootstrap.js</LogicalName>

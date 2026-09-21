@@ -6,6 +6,7 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" PrivateAssets="all" />
     <PackageReference Include="Jellyfin.Controller" Version="12.1.0" />
     <PackageReference Include="Jellyfin.Model" Version="12.1.0" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
     <ProjectReference Include="../../src/Jellyfin.Plugin.Danmuku/Jellyfin.Plugin.Danmuku.csproj" />
   </ItemGroup>
 </Project>
