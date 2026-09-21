@@ -1,4 +1,5 @@
 using Jellyfin.Plugin.Danmuku.Configuration;
+using Jellyfin.Plugin.Danmuku.Import;
 using Jellyfin.Plugin.Danmuku.Storage;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Common.Plugins;
@@ -37,9 +38,17 @@ public sealed class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<IPublishService, PublishService>();
         serviceCollection.AddSingleton<IFileDeletionCoordinator, FileDeletionCoordinator>();
         serviceCollection.AddSingleton<IStorageRecoveryService, StorageRecoveryService>();
+        serviceCollection.AddSingleton<IImportTaskStore, ImportTaskStore>();
+
+        serviceCollection.AddSingleton(TimeProvider.System);
+        serviceCollection.AddSingleton<StorageInitializationState>();
+        serviceCollection.AddSingleton<IMediaPresenceLookup, JellyfinMediaPresenceLookup>();
+        serviceCollection.AddSingleton<MediaBindingService>();
+        serviceCollection.AddSingleton<ImportService>();
 
         // Migrates and recovers the Danmuku database when the Jellyfin host starts.
         serviceCollection.AddHostedService<StorageStartupInitializer>();
+        serviceCollection.AddHostedService<ImportWorker>();
     }
 
     private static Plugin GetPlugin(IServiceProvider services) =>

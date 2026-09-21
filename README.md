@@ -45,6 +45,7 @@ GitHub Actions 分别构建、测试和打包两个插件，并执行独立加�
 - [部署说明](deploy/README.md)：向独立 Jellyfin 实例安装、升级和卸载插件。
 - [架构边界](docs/architecture.md)：插件职责和独立性约束。
 - [初始化验证报告](docs/bootstrap-report.md)：已执行验证及覆盖范围。
+- [M1 弹幕验证记录](docs/SpecAndPlan/M1-Danmuku-Validation.md)：各实施阶段实际结果与未覆盖范围。
 - 设计与实施计划位于 `docs/SpecAndPlan/`，按 Milestone 管理。
 
 ## 部署与边界

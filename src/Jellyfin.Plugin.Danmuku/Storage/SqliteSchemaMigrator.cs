@@ -144,29 +144,47 @@ public sealed class SqliteSchemaMigrator : ISqliteSchemaMigrator
     {
         foreach (var migration in _migrations.Where(migration => migration.Version > fromVersion && migration.Version <= targetVersion))
         {
-            using var transaction = connection.BeginTransaction();
-
-            using (var command = connection.CreateCommand())
+            if (migration.RebuildsReferencedTables)
+                ImportSql.Execute(connection, null, "PRAGMA foreign_keys=OFF;");
+            try
             {
-                command.Transaction = transaction;
-                command.CommandText = migration.Sql;
-                command.ExecuteNonQuery();
-            }
+                using var transaction = connection.BeginTransaction();
 
-            using (var versionCommand = connection.CreateCommand())
+                using (var command = connection.CreateCommand())
+                {
+                    command.Transaction = transaction;
+                    command.CommandText = migration.Sql;
+                    command.ExecuteNonQuery();
+                }
+
+                using (var versionCommand = connection.CreateCommand())
+                {
+                    versionCommand.Transaction = transaction;
+                    versionCommand.CommandText = """
+                        INSERT INTO SchemaVersion (Id, Version, AppliedAtUtcMs)
+                        VALUES (1, $version, $appliedAt)
+                        ON CONFLICT (Id) DO UPDATE SET Version = excluded.Version, AppliedAtUtcMs = excluded.AppliedAtUtcMs;
+                        """;
+                    versionCommand.Parameters.AddWithValue("$version", migration.Version);
+                    versionCommand.Parameters.AddWithValue("$appliedAt", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                    versionCommand.ExecuteNonQuery();
+                }
+
+                using (var check = connection.CreateCommand())
+                {
+                    check.Transaction = transaction;
+                    check.CommandText = "PRAGMA foreign_key_check;";
+                    using var reader = check.ExecuteReader();
+                    if (reader.Read()) throw new InvalidOperationException("Migration violates foreign key integrity.");
+                }
+
+                transaction.Commit();
+            }
+            finally
             {
-                versionCommand.Transaction = transaction;
-                versionCommand.CommandText = """
-                    INSERT INTO SchemaVersion (Id, Version, AppliedAtUtcMs)
-                    VALUES (1, $version, $appliedAt)
-                    ON CONFLICT (Id) DO UPDATE SET Version = excluded.Version, AppliedAtUtcMs = excluded.AppliedAtUtcMs;
-                    """;
-                versionCommand.Parameters.AddWithValue("$version", migration.Version);
-                versionCommand.Parameters.AddWithValue("$appliedAt", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-                versionCommand.ExecuteNonQuery();
+                if (migration.RebuildsReferencedTables)
+                    ImportSql.Execute(connection, null, "PRAGMA foreign_keys=ON;");
             }
-
-            transaction.Commit();
         }
     }
 

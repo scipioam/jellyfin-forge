@@ -8,12 +8,14 @@ public sealed class PublishService : IPublishService
     private readonly ISqliteConnectionFactory _connectionFactory;
     private readonly IPublishFileStore _fileStore;
     private readonly ISqliteWriteCoordinator _writeCoordinator;
+    private readonly TimeProvider _clock;
 
     public PublishService(
         ISqliteConnectionFactory connectionFactory,
         IPublishFileStore fileStore,
-        ISqliteWriteCoordinator writeCoordinator)
+        ISqliteWriteCoordinator writeCoordinator, TimeProvider? clock = null)
     {
+        _clock = clock ?? TimeProvider.System;
         _connectionFactory = connectionFactory ?? throw new ArgumentNullException(nameof(connectionFactory));
         _fileStore = fileStore ?? throw new ArgumentNullException(nameof(fileStore));
         _writeCoordinator = writeCoordinator ?? throw new ArgumentNullException(nameof(writeCoordinator));
@@ -47,7 +49,7 @@ public sealed class PublishService : IPublishService
                         $"Import task '{request.TaskId}' belongs to media '{task.MediaId}', not '{request.MediaId}'.");
                 }
 
-                var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                var now = _clock.GetUtcNow().ToUnixTimeMilliseconds();
                 if (task.TargetFileId is not null)
                 {
                     if (IntentMatches(task, request))
@@ -142,41 +144,6 @@ public sealed class PublishService : IPublishService
 
         var plan = RequirePlan(task);
 
-        var sameFileReplacement = IsReplacement(plan)
-            && string.Equals(plan.ReplaceFileId, plan.FileId, StringComparison.Ordinal);
-        var existingFile = ReadFileMetadata(plan.FileId);
-        if (existingFile is not null)
-        {
-            if (!string.Equals(existingFile.Status, StorageStatuses.Files.Published, StringComparison.Ordinal))
-            {
-                throw new InvalidOperationException($"File '{plan.FileId}' is not published.");
-            }
-
-            if (!string.Equals(existingFile.ContentHash, plan.ContentHash, StringComparison.Ordinal))
-            {
-                throw new InvalidOperationException(
-                    $"File '{plan.FileId}' exists with a different content hash and cannot be reused.");
-            }
-        }
-        else
-        {
-            if (sameFileReplacement)
-            {
-                throw new InvalidOperationException(
-                    $"Replace target '{plan.ReplaceFileId}' has no published file record and cannot be replaced by itself.");
-            }
-
-            if (plan.StagedOriginalPath is null)
-            {
-                throw new InvalidOperationException(
-                    $"Import task '{taskId}' has no staged original file to promote.");
-            }
-
-            // External file operation: promote the staged original before the database
-            // transaction. A crash here leaves the intent for startup recovery.
-            _fileStore.MoveStagedOriginalToOriginals(plan.StagedOriginalPath, plan.StoredFileName);
-        }
-
         var outcome = await _writeCoordinator.EnqueueAsync(
             async (connection, token) =>
             {
@@ -196,16 +163,52 @@ public sealed class PublishService : IPublishService
 
                 var current = RequirePlan(currentRecord);
 
-                if (existingFile is null)
+                var expected = ImportSql.Long(connection, transaction,
+                    "SELECT ExpectedMediaVersion FROM ImportBatches WHERE BatchId=$id", ("$id", current.BatchId));
+                MediaBindingService.RequireVersion(connection, transaction, current.MediaId, expected);
+                if (currentRecord.Status is "AwaitingConfirmation" or "AwaitingConflictResolution")
+                    throw new ImportOperationException("ConfirmationRequired", 409, "The import needs confirmation.");
+                if (ImportSql.Long(connection, transaction,
+                    "SELECT COUNT(*) FROM ImportTasks WHERE TaskId=$id AND DeadlineAtUtcMs<=$now",
+                    ("$id", taskId), ("$now", _clock.GetUtcNow().ToUnixTimeMilliseconds())) > 0)
+                    throw new ImportOperationException("ImportExpired", 409, "The import deadline has passed.");
+                if (ImportSql.Long(connection, transaction,
+                    $"SELECT COUNT(*) FROM ImportSlots WHERE BatchId=$id AND Slot<$slot AND Status NOT IN ({ImportSql.Terminal})",
+                    ("$id", current.BatchId), ("$slot", current.Slot)) > 0)
+                    throw new ImportOperationException("WaitingForPrevious", 409, "A preceding upload position has not finished.");
+                if (IsReplacement(current) && ImportSql.Long(connection, transaction,
+                    "SELECT COUNT(*) FROM MediaBindings WHERE MediaId=$media AND FileId=$file",
+                    ("$media", current.MediaId), ("$file", current.ReplaceFileId)) == 0)
+                    throw new ImportOperationException("ReplaceTargetUnbound", 409, "Cancel and choose a new replacement target.");
+
+                var sameFileReplacement = IsReplacement(current) && current.ReplaceFileId == current.FileId;
+                var existingStatus = ReadFileStatus(connection, transaction, current.FileId);
+                var existingFile = existingStatus is not null;
+                if (existingFile)
+                {
+                    if (existingStatus != StorageStatuses.Files.Published || ImportSql.Text(connection, transaction,
+                        "SELECT ContentHash FROM Files WHERE FileId=$id", ("$id", current.FileId)) != current.ContentHash)
+                        throw new ImportOperationException("FileUnavailable", 409, "The reusable file is no longer available.");
+                }
+                else
+                {
+                    if (sameFileReplacement || current.StagedOriginalPath is null)
+                        throw new InvalidOperationException("No staged original is available for publication.");
+                    // The intent is already durable. Version and terminal checks precede the move;
+                    // the shared writer serializes cancellation, binding edits, deletion and publish.
+                    _fileStore.MoveStagedOriginalToOriginals(current.StagedOriginalPath, current.StoredFileName);
+                }
+
+                if (!existingFile)
                 {
                     InsertFile(connection, transaction, current, commentCount: 0);
                 }
 
-                var importedComments = existingFile is null && !sameFileReplacement
+                var importedComments = !existingFile && !sameFileReplacement
                     ? await InsertCommentsAsync(connection, transaction, current.FileId, comments, token).ConfigureAwait(false)
                     : 0;
 
-                if (existingFile is null)
+                if (!existingFile)
                 {
                     UpdateFileCommentCount(connection, transaction, current.FileId, importedComments);
                 }
@@ -218,7 +221,14 @@ public sealed class PublishService : IPublishService
                     current,
                     sameFileReplacementInsideTransaction);
 
-                CompleteTask(connection, transaction, current, importedComments);
+                ImportSql.Execute(connection, transaction,
+                    "UPDATE ImportBatches SET ExpectedMediaVersion=(SELECT Version FROM MediaState WHERE MediaId=$media) WHERE BatchId=$batch",
+                    ("$media", current.MediaId), ("$batch", current.BatchId));
+                if (existingFile)
+                    importedComments = (int)ImportSql.Long(connection, transaction, "SELECT CommentCount FROM Files WHERE FileId=$id", ("$id", current.FileId));
+                var resultCode = sameFileReplacement ? "Unchanged" : IsReplacement(current) ? "Replaced"
+                    : !bindingCreated ? "AlreadyBound" : existingFile ? "Reused" : "Imported";
+                CompleteTask(connection, transaction, current, importedComments, resultCode);
                 CompleteSlotAndBatch(connection, transaction, current);
 
                 transaction.Commit();
@@ -233,12 +243,13 @@ public sealed class PublishService : IPublishService
             },
             cancellationToken).ConfigureAwait(false);
 
-        if (existingFile is not null && plan.StagedOriginalPath is not null)
+        if (plan.StagedOriginalPath is not null)
         {
-            // Duplicate content: the staged upload is no longer needed after commit.
+            // Any remaining staging copy is no longer needed after commit.
             _fileStore.TryDeleteStagingFile(plan.StagedOriginalPath);
         }
 
+        if (plan.StagedAssetPath is not null) _fileStore.TryDeleteStagedAsset(plan.StagedAssetPath);
         return outcome;
     }
 
@@ -350,19 +361,6 @@ public sealed class PublishService : IPublishService
             GetNullableString(reader, 18));
     }
 
-    private FileMetadata? ReadFileMetadata(string fileId)
-    {
-        using var connection = _connectionFactory.CreateOpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = "SELECT Status, ContentHash, StoredFileName FROM Files WHERE FileId = $fileId;";
-        command.Parameters.AddWithValue("$fileId", fileId);
-
-        using var reader = command.ExecuteReader();
-        return reader.Read()
-            ? new FileMetadata(reader.GetString(0), reader.GetString(1), reader.GetString(2))
-            : null;
-    }
-
     private static string? ReadFileStatus(SqliteConnection connection, SqliteTransaction transaction, string fileId)
     {
         using var command = connection.CreateCommand();
@@ -372,7 +370,7 @@ public sealed class PublishService : IPublishService
         return command.ExecuteScalar() as string;
     }
 
-    private static void InsertFile(SqliteConnection connection, SqliteTransaction transaction, PublishPlan plan, int commentCount)
+    private void InsertFile(SqliteConnection connection, SqliteTransaction transaction, PublishPlan plan, int commentCount)
     {
         Execute(
             connection,
@@ -387,7 +385,7 @@ public sealed class PublishService : IPublishService
             ("$displayName", plan.DisplayName),
             ("$format", plan.Format),
             ("$contentHash", plan.ContentHash),
-            ("$now", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()),
+            ("$now", _clock.GetUtcNow().ToUnixTimeMilliseconds()),
             ("$commentCount", commentCount),
             ("$lastCommentTimeMs", plan.LastCommentTimeMs),
             ("$parseDataVersion", plan.ParseDataVersion));
@@ -455,7 +453,7 @@ public sealed class PublishService : IPublishService
         return count;
     }
 
-    private static (bool BindingCreated, bool ActiveFileChanged) ApplyBindingAndState(
+    private (bool BindingCreated, bool ActiveFileChanged) ApplyBindingAndState(
         SqliteConnection connection,
         SqliteTransaction transaction,
         PublishPlan plan,
@@ -467,7 +465,8 @@ public sealed class PublishService : IPublishService
             return (false, false);
         }
 
-        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var now = _clock.GetUtcNow().ToUnixTimeMilliseconds();
+        var priorBindings = ImportSql.Long(connection, transaction, "SELECT COUNT(*) FROM MediaBindings WHERE MediaId=$id", ("$id", plan.MediaId));
         var bindingCreated = InsertBinding(connection, transaction, plan.MediaId, plan.FileId, now);
 
         if (!IsReplacement(plan))
@@ -478,8 +477,12 @@ public sealed class PublishService : IPublishService
                 InsertMediaState(connection, transaction, plan.MediaId, plan.FileId, isDeactivated: 0, version: 1);
                 return (bindingCreated, true);
             }
-
-            return (bindingCreated, false);
+            var activate = priorBindings == 0 && state.IsDeactivated == 0 && state.ActiveFileId is null;
+            if (bindingCreated)
+                Execute(connection, transaction,
+                    "UPDATE MediaState SET ActiveFileId=CASE WHEN $activate=1 THEN $file ELSE ActiveFileId END,Version=Version+1 WHERE MediaId=$media",
+                    ("$activate", activate ? 1 : 0), ("$file", plan.FileId), ("$media", plan.MediaId));
+            return (bindingCreated, bindingCreated && activate);
         }
 
         var removed = Execute(
@@ -512,6 +515,7 @@ public sealed class PublishService : IPublishService
             return (bindingCreated, true);
         }
 
+        Execute(connection, transaction, "UPDATE MediaState SET Version=Version+1 WHERE MediaId=$media", ("$media", plan.MediaId));
         return (bindingCreated, false);
     }
 
@@ -554,7 +558,7 @@ public sealed class PublishService : IPublishService
             ("$version", version));
     }
 
-    private static void CompleteTask(SqliteConnection connection, SqliteTransaction transaction, PublishPlan plan, int importedComments)
+    private void CompleteTask(SqliteConnection connection, SqliteTransaction transaction, PublishPlan plan, int importedComments, string resultCode)
     {
         Execute(
             connection,
@@ -563,6 +567,7 @@ public sealed class PublishService : IPublishService
             UPDATE ImportTasks
             SET Status = 'Completed',
                 Stage = 'Completed',
+                ResultCode = $resultCode,
                 StagePercent = 100,
                 FileId = $fileId,
                 ImportedComments = $importedComments,
@@ -576,13 +581,14 @@ public sealed class PublishService : IPublishService
             """,
             ("$fileId", plan.FileId),
             ("$importedComments", importedComments),
-            ("$now", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()),
+            ("$resultCode", resultCode),
+            ("$now", _clock.GetUtcNow().ToUnixTimeMilliseconds()),
             ("$taskId", plan.TaskId));
     }
 
-    private static void CompleteSlotAndBatch(SqliteConnection connection, SqliteTransaction transaction, PublishPlan plan)
+    private void CompleteSlotAndBatch(SqliteConnection connection, SqliteTransaction transaction, PublishPlan plan)
     {
-        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var now = _clock.GetUtcNow().ToUnixTimeMilliseconds();
         Execute(
             connection,
             transaction,
@@ -676,8 +682,6 @@ public sealed class PublishService : IPublishService
         string ParseDataVersion,
         string? StagedOriginalPath,
         string? StagedAssetPath);
-
-    private sealed record FileMetadata(string Status, string ContentHash, string StoredFileName);
 
     private sealed record MediaStateRecord(string? ActiveFileId, int IsDeactivated);
 }

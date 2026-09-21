@@ -9,7 +9,7 @@ public static class SchemaMigrations
     /// <summary>
     /// Gets the schema version this plugin build expects.
     /// </summary>
-    public const int CurrentVersion = 2;
+    public const int CurrentVersion = 3;
 
     /// <summary>
     /// Gets the default migration list used in production.
@@ -17,8 +17,53 @@ public static class SchemaMigrations
     public static IReadOnlyList<SchemaMigration> Default { get; } =
     [
         new SchemaMigration(1, "Initial Danmuku schema", InitialSchemaSql),
-        new SchemaMigration(2, "Add publish intent fields to ImportTasks", PublishIntentSql)
+        new SchemaMigration(2, "Add publish intent fields to ImportTasks", PublishIntentSql),
+        new SchemaMigration(3, "Import lifecycle and media checks", ImportLifecycleSql, RebuildsReferencedTables: true)
     ];
+
+    private const string ImportLifecycleSql = """
+        CREATE TABLE ImportBatches_new (
+            BatchId TEXT NOT NULL PRIMARY KEY,
+            MediaId TEXT NOT NULL,
+            Operation TEXT NOT NULL DEFAULT 'append' CHECK (Operation IN ('append','replace')),
+            ReplaceFileId TEXT NULL,
+            ExpectedMediaVersion INTEGER NOT NULL CHECK (ExpectedMediaVersion >= 0),
+            Status TEXT NOT NULL DEFAULT 'Open' CHECK (Status IN ('Open','Finished')),
+            CreatedAtUtcMs INTEGER NOT NULL,
+            FinishedAtUtcMs INTEGER NULL,
+            CHECK ((Operation = 'replace') = (ReplaceFileId IS NOT NULL))
+        );
+        INSERT INTO ImportBatches_new SELECT * FROM ImportBatches;
+        DROP TABLE ImportBatches;
+        ALTER TABLE ImportBatches_new RENAME TO ImportBatches;
+        CREATE INDEX IX_ImportBatches_MediaId ON ImportBatches(MediaId);
+        CREATE INDEX IX_ImportBatches_FinishedAt ON ImportBatches(FinishedAtUtcMs);
+        DROP INDEX IX_Files_ContentHash;
+        CREATE UNIQUE INDEX IX_Files_ContentHash ON Files(ContentHash);
+        CREATE UNIQUE INDEX IX_Files_StoredFileName ON Files(StoredFileName COLLATE NOCASE);
+        ALTER TABLE ImportSlots ADD COLUMN OriginalFileName TEXT NULL;
+        ALTER TABLE ImportSlots ADD COLUMN UploadPath TEXT NULL;
+        ALTER TABLE ImportSlots ADD COLUMN CleanupError TEXT NULL;
+        ALTER TABLE ImportSlots ADD COLUMN LastProgressAtUtcMs INTEGER NULL;
+        ALTER TABLE ImportSlots ADD COLUMN TemporaryBytes INTEGER NOT NULL DEFAULT 0 CHECK (TemporaryBytes >= 0);
+        ALTER TABLE ImportTasks ADD COLUMN ResultCode TEXT NULL;
+        ALTER TABLE ImportTasks ADD COLUMN ParseStatisticsJson TEXT NULL;
+        ALTER TABLE ImportTasks ADD COLUMN ErrorStorageBytes INTEGER NOT NULL DEFAULT 0 CHECK (ErrorStorageBytes >= 0);
+        ALTER TABLE ImportTasks ADD COLUMN SkipConfirmed INTEGER NOT NULL DEFAULT 0 CHECK (SkipConfirmed IN (0,1));
+        ALTER TABLE MediaState ADD COLUMN CheckStatus TEXT NOT NULL DEFAULT 'Unchecked'
+            CHECK (CheckStatus IN ('Unchecked','Exists','Missing','CheckFailed'));
+        ALTER TABLE MediaState ADD COLUMN CheckedAtUtcMs INTEGER NULL;
+        CREATE TABLE BindingCheckJobs (
+            JobId TEXT NOT NULL PRIMARY KEY,
+            Status TEXT NOT NULL CHECK (Status IN ('Queued','Processing','Completed','Interrupted','Failed')),
+            Processed INTEGER NOT NULL DEFAULT 0,
+            Missing INTEGER NOT NULL DEFAULT 0,
+            Failed INTEGER NOT NULL DEFAULT 0,
+            CreatedAtUtcMs INTEGER NOT NULL,
+            FinishedAtUtcMs INTEGER NULL
+        );
+        CREATE UNIQUE INDEX IX_BindingCheckJobs_Active ON BindingCheckJobs((1)) WHERE Status IN ('Queued','Processing');
+        """;
 
     private const string PublishIntentSql = """
         ALTER TABLE ImportTasks ADD COLUMN TargetFileId TEXT NULL;

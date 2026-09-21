@@ -14,12 +14,14 @@ public sealed class StorageRecoveryService : IStorageRecoveryService
     private readonly ISqliteConnectionFactory _connectionFactory;
     private readonly IPublishFileStore _fileStore;
     private readonly ISqliteWriteCoordinator _writeCoordinator;
+    private readonly TimeProvider _clock;
 
     public StorageRecoveryService(
         ISqliteConnectionFactory connectionFactory,
         IPublishFileStore fileStore,
-        ISqliteWriteCoordinator writeCoordinator)
+        ISqliteWriteCoordinator writeCoordinator, TimeProvider? clock = null)
     {
+        _clock = clock ?? TimeProvider.System;
         _connectionFactory = connectionFactory ?? throw new ArgumentNullException(nameof(connectionFactory));
         _fileStore = fileStore ?? throw new ArgumentNullException(nameof(fileStore));
         _writeCoordinator = writeCoordinator ?? throw new ArgumentNullException(nameof(writeCoordinator));
@@ -81,7 +83,7 @@ public sealed class StorageRecoveryService : IStorageRecoveryService
                     }
                 }
 
-                var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                var now = _clock.GetUtcNow().ToUnixTimeMilliseconds();
                 using var transaction = connection.BeginTransaction();
 
                 foreach (var taskId in retrySucceeded)
@@ -136,6 +138,8 @@ public sealed class StorageRecoveryService : IStorageRecoveryService
                     """,
                     ("$now", now));
 
+                Execute(connection, transaction,
+                    "UPDATE BindingCheckJobs SET Status='Interrupted',FinishedAtUtcMs=$now WHERE Status IN ('Queued','Processing')", ("$now", now));
                 transaction.Commit();
                 return Task.FromResult(new StorageRecoveryReport(
                     interruptedTasks,

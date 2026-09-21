@@ -15,8 +15,9 @@ public sealed class SqliteWriteCoordinator : ISqliteWriteCoordinator, IDisposabl
     public SqliteWriteCoordinator(ISqliteConnectionFactory connectionFactory)
     {
         _connectionFactory = connectionFactory ?? throw new ArgumentNullException(nameof(connectionFactory));
-        _queue = Channel.CreateUnbounded<IWriteOperation>(new UnboundedChannelOptions
+        _queue = Channel.CreateBounded<IWriteOperation>(new BoundedChannelOptions(256)
         {
+            FullMode = BoundedChannelFullMode.Wait,
             SingleReader = true,
             SingleWriter = false,
             AllowSynchronousContinuations = false
@@ -24,7 +25,7 @@ public sealed class SqliteWriteCoordinator : ISqliteWriteCoordinator, IDisposabl
         _writerLoop = Task.Run(ProcessQueueAsync);
     }
 
-    public Task<TResult> EnqueueAsync<TResult>(
+    public async Task<TResult> EnqueueAsync<TResult>(
         Func<SqliteConnection, CancellationToken, Task<TResult>> work,
         CancellationToken cancellationToken = default)
     {
@@ -32,12 +33,8 @@ public sealed class SqliteWriteCoordinator : ISqliteWriteCoordinator, IDisposabl
         ObjectDisposedException.ThrowIf(_disposed, this);
 
         var operation = new WriteOperation<TResult>(work, cancellationToken);
-        if (!_queue.Writer.TryWrite(operation))
-        {
-            throw new InvalidOperationException("The Danmuku SQLite write coordinator is no longer accepting work.");
-        }
-
-        return operation.Completion;
+        await _queue.Writer.WriteAsync(operation, cancellationToken).ConfigureAwait(false);
+        return await operation.Completion.ConfigureAwait(false);
     }
 
     public async Task EnqueueAsync(

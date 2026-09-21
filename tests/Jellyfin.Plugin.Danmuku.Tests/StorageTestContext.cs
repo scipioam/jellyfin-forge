@@ -74,6 +74,7 @@ internal sealed class StorageTestServices : IAsyncDisposable
         Publish = new PublishService(context.Factory, FileStore, Coordinator);
         Deletion = new FileDeletionCoordinator(context.Factory, FileStore, Coordinator);
         Recovery = new StorageRecoveryService(context.Factory, FileStore, Coordinator);
+        ImportTasks = new ImportTaskStore(context.Factory, Coordinator);
     }
 
     public SqliteWriteCoordinator Coordinator { get; }
@@ -85,6 +86,8 @@ internal sealed class StorageTestServices : IAsyncDisposable
     public IFileDeletionCoordinator Deletion { get; }
 
     public IStorageRecoveryService Recovery { get; }
+
+    public IImportTaskStore ImportTasks { get; }
 
     public ValueTask DisposeAsync() => Coordinator.DisposeAsync();
 }

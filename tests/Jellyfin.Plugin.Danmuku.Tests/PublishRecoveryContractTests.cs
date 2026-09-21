@@ -9,7 +9,7 @@ namespace Jellyfin.Plugin.Danmuku.Tests;
 public sealed class PublishRecoveryContractTests
 {
     private static readonly SchemaMigration FailingMigration = new(
-        3,
+        SchemaMigrations.CurrentVersion + 1,
         "Failing test migration",
         "CREATE TABLE MigrationProbe (Id INTEGER PRIMARY KEY); INSERT INTO MissingTable (Id) VALUES (1);");
 

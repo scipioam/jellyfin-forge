@@ -17,14 +17,16 @@ public sealed class StorageStartupInitializer : IHostedService
     private readonly IFileDeletionCoordinator _deletionCoordinator;
     private readonly ISqliteNativeLibraryProbe _nativeLibraryProbe;
     private readonly ILogger<StorageStartupInitializer> _logger;
+    private readonly StorageInitializationState? _state;
 
     public StorageStartupInitializer(
         ISqliteSchemaMigrator migrator,
         IStorageRecoveryService recoveryService,
         IFileDeletionCoordinator deletionCoordinator,
         ISqliteNativeLibraryProbe nativeLibraryProbe,
-        ILogger<StorageStartupInitializer> logger)
+        ILogger<StorageStartupInitializer> logger, StorageInitializationState? state = null)
     {
+        _state = state;
         _migrator = migrator ?? throw new ArgumentNullException(nameof(migrator));
         _recoveryService = recoveryService ?? throw new ArgumentNullException(nameof(recoveryService));
         _deletionCoordinator = deletionCoordinator ?? throw new ArgumentNullException(nameof(deletionCoordinator));
@@ -34,6 +36,7 @@ public sealed class StorageStartupInitializer : IHostedService
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
+        var succeeded = false;
         try
         {
             string nativeLibraryPath;
@@ -88,6 +91,7 @@ public sealed class StorageStartupInitializer : IHostedService
                     cleanup.Deleted,
                     cleanup.Failed);
             }
+            succeeded = true;
         }
         catch (Exception exception)
         {
@@ -95,6 +99,7 @@ public sealed class StorageStartupInitializer : IHostedService
                 exception,
                 "Danmuku storage initialization failed; the plugin continues without storage and existing data is kept.");
         }
+        finally { _state?.Complete(succeeded); }
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;

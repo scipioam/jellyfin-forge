@@ -12,12 +12,12 @@ public sealed class SqliteStorageContractTests
     private const int SqliteConstraintForeignKey = 787;
 
     private static readonly SchemaMigration ProbeMigration = new(
-        3,
+        SchemaMigrations.CurrentVersion + 1,
         "Test probe migration",
         "CREATE TABLE MigrationProbe (Id INTEGER PRIMARY KEY, Note TEXT NOT NULL); INSERT INTO MigrationProbe (Id, Note) VALUES (1, 'probe');");
 
     private static readonly SchemaMigration FailingMigration = new(
-        3,
+        SchemaMigrations.CurrentVersion + 1,
         "Failing test migration",
         "CREATE TABLE MigrationProbe (Id INTEGER PRIMARY KEY); INSERT INTO MissingTable (Id) VALUES (1);");
 
@@ -79,14 +79,14 @@ public sealed class SqliteStorageContractTests
         Assert.Equal(
             new[]
             {
-                "Comments", "Files", "ImportBatches", "ImportErrors", "ImportSlots",
+                "BindingCheckJobs", "Comments", "Files", "ImportBatches", "ImportErrors", "ImportSlots",
                 "ImportTasks", "MediaBindings", "MediaState", "PlaybackRequests", "SchemaVersion"
             },
             QueryNames(connection, "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name;"));
         Assert.Equal(
             new[]
             {
-                "IX_Comments_File_Time", "IX_Files_ContentHash", "IX_ImportBatches_FinishedAt",
+                "IX_BindingCheckJobs_Active", "IX_Comments_File_Time", "IX_Files_ContentHash", "IX_Files_StoredFileName", "IX_ImportBatches_FinishedAt",
                 "IX_ImportBatches_MediaId", "IX_ImportErrors_Task_SourceOrdinal", "IX_ImportTasks_FinishedAt",
                 "IX_MediaBindings_FileId", "IX_PlaybackRequests_ExpiresAt", "IX_PlaybackRequests_SessionHash",
                 "IX_PlaybackRequests_UserMedia"
@@ -192,7 +192,7 @@ public sealed class SqliteStorageContractTests
         storage.CreateMigrator().Migrate();
         using var connection = storage.Factory.CreateOpenConnection();
         InsertFile(connection, "file-1");
-        InsertFile(connection, "file-2");
+        InsertFile(connection, "file-2", contentHash: "hash-2");
         InsertBinding(connection, "media-1", "file-1");
         InsertBinding(connection, "media-2", "file-2");
 
@@ -261,7 +261,7 @@ public sealed class SqliteStorageContractTests
         var result = migrator.Migrate();
 
         Assert.Equal(SchemaMigrations.CurrentVersion, result.FromVersion);
-        Assert.Equal(3, result.ToVersion);
+        Assert.Equal(SchemaMigrations.CurrentVersion + 1, result.ToVersion);
         Assert.NotNull(result.BackupPath);
         Assert.True(File.Exists(result.BackupPath));
         Assert.StartsWith(storage.Paths.MigrationsPath, result.BackupPath!, StringComparison.Ordinal);
@@ -276,7 +276,7 @@ public sealed class SqliteStorageContractTests
         }
 
         using var current = storage.Factory.CreateOpenConnection();
-        Assert.Equal(3L, ScalarLong(current, "SELECT Version FROM SchemaVersion WHERE Id = 1;"));
+        Assert.Equal(SchemaMigrations.CurrentVersion + 1L, ScalarLong(current, "SELECT Version FROM SchemaVersion WHERE Id = 1;"));
         Assert.Equal("probe", ScalarString(current, "SELECT Note FROM MigrationProbe WHERE Id = 1;"));
         Assert.Equal(1L, ScalarLong(current, "SELECT COUNT(*) FROM Files WHERE FileId = 'file-1';"));
     }

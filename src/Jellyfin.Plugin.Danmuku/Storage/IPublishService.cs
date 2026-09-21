@@ -15,7 +15,7 @@ public interface IPublishService
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Promotes the staged original (outside the transaction) and commits the file,
+    /// Promotes the staged original (an external operation not rolled back by SQLite) and commits the file,
     /// comments, binding, active selection and task completion in a single transaction.
     /// </summary>
     Task<PublishOutcome> PublishAsync(
