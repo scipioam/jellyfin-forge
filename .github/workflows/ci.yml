@@ -44,3 +44,64 @@ jobs:
             artifacts/smoke/**/result.json
             artifacts/smoke/**/server.log
             artifacts/smoke/results.json
+  danmuku-integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      DOTNET_PROCESSOR_COUNT: 1
+      MSBUILDDISABLENODEREUSE: 1
+      UseSharedCompilation: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --prefix tests/browser
+      - run: cd tests/browser && npx playwright install --with-deps chromium firefox
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: docker pull jellyfin/jellyfin:12.1
+      - run: python3 -m unittest discover -s tests/integration -p 'test_*.py'
+      - run: ./build/test-browser.sh
+      - run: ./build/test-browser.sh --base-url /jellyfin
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: danmuku-integration-results
+          path: |
+            artifacts/m1/integration/**/*-results.json
+            artifacts/m1/integration/**/*-browser.json
+            artifacts/m1/integration/**/*-failure.json
+            artifacts/m1/integration/**/*.png
+          if-no-files-found: ignore
+  danmuku-performance:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      DOTNET_PROCESSOR_COUNT: 1
+      MSBUILDDISABLENODEREUSE: 1
+      UseSharedCompilation: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --prefix tests/browser
+      - run: cd tests/browser && npx playwright install --with-deps chromium
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: docker pull jellyfin/jellyfin:12.1
+      - run: ./build/test-performance.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: danmuku-performance-results
+          path: |
+            artifacts/m1/integration/**/*-performance.json
+            artifacts/m1/integration/**/performance-progress.json
+            artifacts/m1/integration/**/*-failure.json

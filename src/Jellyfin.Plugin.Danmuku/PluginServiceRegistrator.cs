@@ -45,6 +45,10 @@ public sealed class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<IMediaPresenceLookup, JellyfinMediaPresenceLookup>();
         serviceCollection.AddSingleton<MediaBindingService>();
         serviceCollection.AddSingleton<ImportService>();
+        serviceCollection.AddSingleton<Api.ManagementQueries>();
+        serviceCollection.AddSingleton<Playback.IPlaybackSessionLookup, Api.JellyfinPlaybackSessions>();
+        serviceCollection.AddSingleton(new Playback.PlaybackBudgets());
+        serviceCollection.AddSingleton<Playback.PlaybackService>();
 
         // Migrates and recovers the Danmuku database when the Jellyfin host starts.
         serviceCollection.AddHostedService<StorageStartupInitializer>();

@@ -4,10 +4,10 @@ A personal collection of independently deployable Jellyfin plugins.
 
 ## Plugins
 
-- **Danmuku** — 弹幕导入、标准化、存储、绑定、时间轴、过滤、管理页面、业务 REST API 和播放器扩展的独立插件。
+- **Danmuku** — 弹幕导入、标准化、存储、绑定、有限集合筛选、管理页面、业务 REST API 和播放器扩展的独立插件。
 - **AgentBridge** — Jellyfin 与外部 Agent / Otter 之间的稳定适配层，预留媒体库、受控 metadata/tag 写入、事件及播放状态接口；不负责 AI 推理。
 
-当前仅有可加载的工程骨架、各自的 Dashboard 配置页和管理员 health API，尚未实现上述业务功能。
+Danmuku M1 已实现 XML/JSON 导入、独立 SQLite 存储、文件与媒体绑定管理、有限播放集合和 Web Canvas 展示；阶段验证与人工验收状态见 [M1 验证记录](docs/SpecAndPlan/M1-Danmuku-Validation.md)。时间轴编辑、切分与合并不属于 M1。AgentBridge 当前仍为独立工程骨架、配置页和管理员 health API。
 
 两个插件分别拥有 GUID、配置、版本和发布包，可以独立安装、升级、卸载和运行；不互相引用或调用，不共享数据库、配置或生命周期，不建立 Core Plugin。未来 Otter 如需弹幕能力，应分别调用两个插件。
 
@@ -33,13 +33,13 @@ Jellyfin Server 不属于本仓库，不维护 Server fork，当前也不维护 
 ./build/package.sh agentbridge
 ```
 
-发布文件：`artifacts/jellyfin-plugin-danmuku-0.1.0.zip`、`artifacts/jellyfin-plugin-agentbridge-0.1.0.zip`，各带 SHA-256 校验文件。ZIP 包含自身 DLL、`meta.json`、LICENSE，不打包 Jellyfin 或 .NET 运行时。新增第三方运行时依赖时须相应更新打包逻辑。
+发布文件：`artifacts/jellyfin-plugin-danmuku-0.2.0.zip`、`artifacts/jellyfin-plugin-agentbridge-0.1.0.zip`，各带 SHA-256 校验文件。ZIP 包含自身 DLL、`meta.json` 和 LICENSE；Danmuku 另含独立 SQLite 依赖、RID 分层原生资产及依赖清单。不打包 Jellyfin 或 .NET 运行时。
 
 版本分别定义在各插件 `.csproj` 的 `Version` 与 `AssemblyVersion`（例如 `0.1.0` / `0.1.0.0`），独立递增；GUID 发布后保持稳定。共享 MSBuild 文件只包含编译设置，不包含统一插件版本。
 
 ## 验证与文档
 
-GitHub Actions 分别构建、测试和打包两个插件，并执行独立加载及共存 smoke 测试。CI 上传构建产物，尚不自动发布 GitHub Release 或 Jellyfin 插件源。
+GitHub Actions 分别构建、测试和打包两个插件，并执行独立加载及共存 smoke、Danmuku HTTP/部署与 Chromium/Firefox 回归。长时间性能矩阵由 `workflow_dispatch` 单独触发。CI 上传构建产物，尚不自动发布 GitHub Release 或 Jellyfin 插件源。
 
 - [开发与集成测试](deploy/docker/dev/README.md)：仓库标准测试环境、脚本用法和隔离数据约定。
 - [部署说明](deploy/README.md)：向独立 Jellyfin 实例安装、升级和卸载插件。

@@ -1,57 +1,1108 @@
-<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="utf-8"><title>Danmuku</title></head>
-<body>
-<div id="DanmukuConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-checkbox,emby-button">
-    <div data-role="content"><div class="content-primary">
-        <h2>Danmuku</h2>
-        <p>Independent danmuku management for Jellyfin. Bootstrap configuration only.</p>
-        <form id="DanmukuConfigForm">
-            <div class="inputContainer">
-                <label class="inputLabel" for="DanmukuInstanceLabel">Instance label</label>
-                <input is="emby-input" id="DanmukuInstanceLabel" type="text" />
+<!doctype html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="utf-8" />
+        <title>Danmuku</title>
+    </head>
+    <body>
+        <div
+            id="DanmukuConfigPage"
+            data-role="page"
+            class="page type-interior pluginConfigurationPage"
+            data-require="emby-input,emby-checkbox,emby-button"
+        >
+            <div data-role="content">
+                <div class="content-primary">
+                    <h2>Danmuku 弹幕</h2>
+                    <p id="DanmukuError" role="status" aria-live="polite"></p>
+                    <nav aria-label="弹幕管理">
+                        <button type="button" data-tab="media">媒体绑定</button>
+                        <button type="button" data-tab="files">弹幕文件</button>
+                        <button type="button" data-tab="tasks">导入任务</button>
+                        <button type="button" data-tab="settings">设置</button>
+                    </nav>
+                    <section data-section="media">
+                        <h3>媒体绑定</h3>
+                        <label
+                            >媒体名称 <input id="dm-media-search" type="search"
+                        /></label>
+                        <button type="button" id="dm-search-media">搜索</button>
+                        <button type="button" id="dm-abnormal">失效绑定</button>
+                        <button type="button" id="dm-check">
+                            检查全部绑定
+                        </button>
+                        <p id="dm-check-result"></p>
+                        <div id="dm-media-list"></div>
+                        <div id="dm-binding"></div>
+                    </section>
+                    <section data-section="files" hidden>
+                        <h3>弹幕文件</h3>
+                        <label
+                            >文件名 <input id="dm-file-search" type="search"
+                        /></label>
+                        <label
+                            ><input
+                                id="dm-unbound"
+                                type="checkbox"
+                            />仅未绑定</label
+                        >
+                        <button type="button" id="dm-search-files">搜索</button>
+                        <div id="dm-files-list"></div>
+                    </section>
+                    <section data-section="tasks" hidden>
+                        <h3>导入任务</h3>
+                        <label
+                            >批次 ID（留空查看近期）
+                            <input id="dm-batch" type="text"
+                        /></label>
+                        <button type="button" id="dm-search-tasks">刷新</button>
+                        <button type="button" id="dm-confirm-batch">
+                            跳过本批已待确认的全部异常
+                        </button>
+                        <button type="button" id="dm-cancel-batch">
+                            取消本批未完成位置
+                        </button>
+                        <p>
+                            关闭本页不取消服务端已接收任务。异常确认保留 24
+                            小时；终态记录保留 7 天。批次结束不等于全部成功。
+                        </p>
+                        <div id="dm-slots"></div>
+                        <div id="dm-tasks-list"></div>
+                        <div id="dm-errors"></div>
+                    </section>
+                    <section data-section="settings" hidden>
+                        <h3>设置</h3>
+                        <form id="DanmukuConfigForm">
+                            <label
+                                >实例标签
+                                <input id="DanmukuInstanceLabel" type="text"
+                            /></label>
+                            <p>
+                                <label
+                                    ><input
+                                        type="checkbox"
+                                        id="DanmukuEnableWebSupport"
+                                    />启用 Jellyfin Web 弹幕</label
+                                >
+                            </p>
+                            <p>
+                                保存后对新播放生效；已打开的播放页刷新后完全生效。用户密度档、区域、不透明度及字号偏好各自保存在浏览器。
+                            </p>
+                            <div id="dm-number-settings"></div>
+                            <button
+                                is="emby-button"
+                                type="submit"
+                                class="raised button-submit"
+                            >
+                                保存设置
+                            </button>
+                            <button type="button" id="dm-defaults">
+                                恢复默认数值
+                            </button>
+                        </form>
+                        <p id="dm-integration"></p>
+                        <p>
+                            开关不部署入口。用仓库入口工具生成并挂载对应镜像入口，刷新页面后检查播放器；状态无法从插件内确认时不会显示“已部署”。
+                        </p>
+                    </section>
+                </div>
             </div>
-            <div class="checkboxContainer">
-                <label>
-                    <input is="emby-checkbox" type="checkbox" id="DanmukuEnableWebSupport" />
-                    <span>Enable Jellyfin Web danmuku support</span>
-                </label>
-            </div>
-            <p id="DanmukuError" role="alert"></p>
-            <button is="emby-button" type="submit" class="raised button-submit block"><span>Save</span></button>
-        </form>
-    </div></div>
-    <script>
-    (function () {
-        var page = document.querySelector('#DanmukuConfigPage');
-        var pluginId = '6f79690c-c1d0-4738-b241-09aaa2c570e7';
-        function failed() {
-            Dashboard.hideLoadingMsg();
-            page.querySelector('#DanmukuError').textContent = 'Unable to load or save configuration. Please retry.';
-        }
-        page.addEventListener('pageshow', function () {
-            page.querySelector('#DanmukuError').textContent = '';
-            Dashboard.showLoadingMsg();
-            ApiClient.getPluginConfiguration(pluginId).then(function (config) {
-                page.querySelector('#DanmukuInstanceLabel').value = config.InstanceLabel;
-                page.querySelector('#DanmukuEnableWebSupport').checked = config.EnableWebSupport === true;
-                Dashboard.hideLoadingMsg();
-            }).catch(failed);
-        });
-        page.querySelector('form').addEventListener('submit', function (event) {
-            event.preventDefault();
-            page.querySelector('#DanmukuError').textContent = '';
-            Dashboard.showLoadingMsg();
-            ApiClient.getPluginConfiguration(pluginId).then(function (config) {
-                config.InstanceLabel = page.querySelector('#DanmukuInstanceLabel').value;
-                config.EnableWebSupport = page.querySelector('#DanmukuEnableWebSupport').checked;
-                return ApiClient.updatePluginConfiguration(pluginId, config);
-            }).then(function (result) {
-                Dashboard.processPluginConfigurationUpdateResult(result);
-            }).catch(failed);
-        });
-    }());
-    </script>
-</div>
-</body>
+            <style>
+                #DanmukuConfigPage section {
+                    margin-top: 1.5em;
+                }
+                #DanmukuConfigPage section[hidden] {
+                    display: none;
+                }
+                #DanmukuConfigPage button {
+                    margin: 0.25em;
+                    padding: 0.5em 0.8em;
+                    cursor: pointer;
+                }
+                #DanmukuConfigPage input,
+                #DanmukuConfigPage select {
+                    padding: 0.5em;
+                    max-width: 90%;
+                    color: inherit;
+                    background: transparent;
+                    border: 1px solid #888;
+                }
+                #DanmukuConfigPage .dm-row {
+                    padding: 12px 0;
+                    border-bottom: 1px solid #7775;
+                    overflow-wrap: anywhere;
+                }
+                #DanmukuConfigPage .dm-summary {
+                    line-height: 1.7;
+                }
+                #DanmukuConfigPage label {
+                    display: inline-block;
+                    margin: 6px;
+                }
+                #DanmukuConfigPage select option {
+                    background: #222;
+                    color: white;
+                }
+            </style>
+            <script>
+                (function () {
+                    "use strict";
+                    var page = document.querySelector("#DanmukuConfigPage"),
+                        pluginId = "6f79690c-c1d0-4738-b241-09aaa2c570e7",
+                        selected = null,
+                        state = null,
+                        timer = null,
+                        alive = false,
+                        tab = "media",
+                        taskStart = 0;
+                    function $(id) {
+                        return page.querySelector("#" + id);
+                    }
+                    function normalize(v) {
+                        if (Array.isArray(v)) return v.map(normalize);
+                        if (v && typeof v === "object") {
+                            var o = {};
+                            Object.keys(v).forEach(function (k) {
+                                o[k[0].toLowerCase() + k.slice(1)] = normalize(
+                                    v[k],
+                                );
+                            });
+                            return o;
+                        }
+                        return v;
+                    }
+                    function header() {
+                        return (
+                            'MediaBrowser Client="Danmuku", Device="Web", DeviceId=' +
+                            JSON.stringify(ApiClient.deviceId()) +
+                            ', Version="0.2.0", Token=' +
+                            JSON.stringify(ApiClient.accessToken())
+                        );
+                    }
+                    async function req(route, method, body) {
+                        var r = await fetch(
+                            ApiClient.getUrl("Danmuku/" + route),
+                            {
+                                method: method || "GET",
+                                headers: {
+                                    Authorization: header(),
+                                    "Content-Type": "application/json",
+                                },
+                                body:
+                                    body === undefined
+                                        ? undefined
+                                        : JSON.stringify(body),
+                            },
+                        );
+                        var text = await r.text(),
+                            data;
+                        try {
+                            data = JSON.parse(text);
+                        } catch (_) {
+                            data = {};
+                        }
+                        data = normalize(data);
+                        if (!r.ok)
+                            throw new Error(
+                                (data.code || "HTTP " + r.status) +
+                                    ": " +
+                                    (data.message || "请求失败，请刷新后重试"),
+                            );
+                        return data;
+                    }
+                    function report(text) {
+                        $("DanmukuError").textContent = text;
+                    }
+                    function action(fn) {
+                        return async function (e) {
+                            if (e) e.preventDefault();
+                            try {
+                                await fn();
+                            } catch (error) {
+                                report(error.message);
+                            }
+                        };
+                    }
+                    function button(text, fn, parent) {
+                        var b = document.createElement("button");
+                        b.type = "button";
+                        b.textContent = text;
+                        b.addEventListener("click", action(fn));
+                        parent.appendChild(b);
+                        return b;
+                    }
+                    function line(parent, text) {
+                        var p = document.createElement("p");
+                        p.textContent = text;
+                        parent.appendChild(p);
+                        return p;
+                    }
+                    function row(parent) {
+                        var r = document.createElement("div");
+                        r.className = "dm-row";
+                        parent.appendChild(r);
+                        return r;
+                    }
+                    function switchTab(next) {
+                        tab = next;
+                        page.querySelectorAll("[data-section]").forEach(
+                            function (s) {
+                                s.hidden = s.dataset.section !== next;
+                            },
+                        );
+                    }
+                    function paged(host, result, start, load, render) {
+                        host.replaceChildren();
+                        result.items.forEach(function (item) {
+                            render(row(host), item);
+                        });
+                        line(
+                            host,
+                            "共 " +
+                                result.totalCount +
+                                " 项 · 第 " +
+                                (Math.floor(start / 50) + 1) +
+                                " 页",
+                        );
+                        button(
+                            "上一页",
+                            function () {
+                                return load(Math.max(0, start - 50));
+                            },
+                            host,
+                        ).disabled = start === 0;
+                        button(
+                            "下一页",
+                            function () {
+                                return load(start + 50);
+                            },
+                            host,
+                        ).disabled = start + 50 >= result.totalCount;
+                    }
+                    var fields = [
+                        ["ShortLoadLimit", "短于 30 分钟加载上限", 20000],
+                        [
+                            "MediumLoadLimit",
+                            "30–60 分钟（含边界）加载上限",
+                            20000,
+                        ],
+                        ["LongLoadLimit", "长于 60 分钟加载上限", 20000],
+                        ["LowDensity", "低密度同屏条数", 100],
+                        ["MediumDensity", "中密度同屏条数", 100],
+                        ["HighDensity", "高密度同屏条数", 100],
+                    ];
+                    fields.forEach(function (f) {
+                        var label = document.createElement("label");
+                        label.textContent = f[1] + " ";
+                        var input = document.createElement("input");
+                        input.type = "number";
+                        input.min = 1;
+                        input.max = f[2];
+                        input.step = 1;
+                        input.required = true;
+                        input.id = "dm-" + f[0];
+                        label.appendChild(input);
+                        $("dm-number-settings").appendChild(label);
+                    });
+                    $("dm-defaults").onclick = function () {
+                        fields.forEach(function (f, i) {
+                            $("dm-" + f[0]).value = [
+                                5000, 8000, 10000, 15, 30, 50,
+                            ][i];
+                        });
+                        report("已恢复默认加载上限和密度，点击保存后生效。");
+                    };
+                    async function settings() {
+                        var config =
+                            await ApiClient.getPluginConfiguration(pluginId);
+                        $("DanmukuInstanceLabel").value = config.InstanceLabel;
+                        $("DanmukuEnableWebSupport").checked =
+                            config.WebEnabled === true ||
+                            config.EnableWebSupport === true;
+                        fields.forEach(function (f) {
+                            $("dm-" + f[0]).value = config[f[0]];
+                        });
+                        var integration = await req("WebIntegration");
+                        $("dm-integration").textContent =
+                            "功能：" +
+                            (integration.enabled ? "已启用" : "已停用") +
+                            "；入口：" +
+                            ({
+                                MarkerDetected:
+                                    "检测到部署标记，浏览器需刷新核验",
+                                NotDeployed: "未检测到入口，请生成并重新部署",
+                                ReadFailed: "无法读取入口，请检查部署",
+                                Unavailable: "入口不可用，请检查 Web 路径",
+                            }[integration.entryStatus] ||
+                                integration.entryStatus) +
+                            "；资源版本：" +
+                            integration.resourceVersion;
+                    }
+                    $("DanmukuConfigForm").addEventListener(
+                        "submit",
+                        action(async function () {
+                            var config =
+                                await ApiClient.getPluginConfiguration(
+                                    pluginId,
+                                );
+                            config.InstanceLabel = $(
+                                "DanmukuInstanceLabel",
+                            ).value;
+                            config.WebEnabled = config.EnableWebSupport = $(
+                                "DanmukuEnableWebSupport",
+                            ).checked;
+                            fields.forEach(function (f) {
+                                config[f[0]] = Number($("dm-" + f[0]).value);
+                            });
+                            if (
+                                config.ShortLoadLimit >
+                                    config.MediumLoadLimit ||
+                                config.MediumLoadLimit > config.LongLoadLimit ||
+                                config.LowDensity > config.MediumDensity ||
+                                config.MediumDensity > config.HighDensity
+                            )
+                                throw new Error(
+                                    "加载上限及密度三档均须按顺序非递减，设置未保存。",
+                                );
+                            await ApiClient.updatePluginConfiguration(
+                                pluginId,
+                                config,
+                            );
+                            report(
+                                "设置已保存，对新播放生效；打开的播放页需刷新。",
+                            );
+                            await settings();
+                        }),
+                    );
+                    async function media(start, parent, abnormal) {
+                        var route =
+                            "Media?startIndex=" +
+                            start +
+                            "&limit=50&search=" +
+                            encodeURIComponent($("dm-media-search").value);
+                        if (parent)
+                            route += "&parentId=" + encodeURIComponent(parent);
+                        if (abnormal) route += "&abnormal=true";
+                        var result = await req(route);
+                        paged(
+                            $("dm-media-list"),
+                            result,
+                            start,
+                            function (s) {
+                                return media(s, parent, abnormal);
+                            },
+                            function (r, item) {
+                                line(
+                                    r,
+                                    (item.name || item.mediaId) +
+                                        " · " +
+                                        (item.type || item.checkStatus),
+                                );
+                                button(
+                                    item.canBind || abnormal
+                                        ? "管理绑定"
+                                        : "进入",
+                                    async function () {
+                                        if (item.canBind || abnormal) {
+                                            selected = item.id || item.mediaId;
+                                            await bindings();
+                                        } else await media(0, item.id, false);
+                                    },
+                                    r,
+                                );
+                            },
+                        );
+                        if (parent)
+                            button(
+                                "返回全部媒体",
+                                function () {
+                                    return media(0);
+                                },
+                                $("dm-media-list"),
+                            );
+                    }
+                    async function update(ids, active) {
+                        state = await req(
+                            "Media/" + selected + "/Bindings",
+                            "PUT",
+                            {
+                                expectedVersion: state.version,
+                                fileIds: ids,
+                                activeFileId: active,
+                            },
+                        );
+                        await bindings();
+                    }
+                    async function bindings() {
+                        state = await req("Media/" + selected + "/Bindings");
+                        var host = $("dm-binding");
+                        host.replaceChildren();
+                        line(
+                            host,
+                            "媒体 " +
+                                selected +
+                                " · 版本 " +
+                                state.version +
+                                " · " +
+                                state.checkStatus,
+                        );
+                        line(
+                            host,
+                            "解除绑定保留文件本体；替换仅改变本媒体，其他媒体引用不变。",
+                        );
+                        for (var id of state.fileIds) {
+                            var file = await req(
+                                "Files/" + encodeURIComponent(id),
+                            );
+                            (function (id, file) {
+                                var r = row(host);
+                                line(
+                                    r,
+                                    file.storedFileName +
+                                        (id === state.activeFileId
+                                            ? " · 生效"
+                                            : ""),
+                                );
+                                button(
+                                    "设为生效",
+                                    function () {
+                                        return update(state.fileIds, id);
+                                    },
+                                    r,
+                                );
+                                button(
+                                    "解除绑定",
+                                    function () {
+                                        if (
+                                            confirm(
+                                                "解除本媒体绑定；文件本体和其他媒体不受影响。解除生效文件会停用本媒体弹幕。",
+                                            )
+                                        )
+                                            return update(
+                                                state.fileIds.filter(
+                                                    function (x) {
+                                                        return x !== id;
+                                                    },
+                                                ),
+                                                state.activeFileId === id
+                                                    ? null
+                                                    : state.activeFileId,
+                                            );
+                                    },
+                                    r,
+                                );
+                                button(
+                                    "替换",
+                                    function () {
+                                        if (
+                                            !confirm(
+                                                "选择一个新文件替换本媒体绑定；完整发布后才生效，旧文件和其他媒体保留。",
+                                            )
+                                        )
+                                            return;
+                                        chooseUpload(true, id);
+                                    },
+                                    r,
+                                );
+                            })(id, file);
+                        }
+                        button(
+                            "停用本媒体弹幕",
+                            function () {
+                                return update(state.fileIds, null);
+                            },
+                            host,
+                        );
+                        button(
+                            "绑定已有文件（前往文件列表）",
+                            async function () {
+                                switchTab("files");
+                                await fileList(0);
+                            },
+                            host,
+                        );
+                        button(
+                            "上传导入（最多 10 个）",
+                            function () {
+                                chooseUpload(false);
+                            },
+                            host,
+                        );
+                    }
+                    function chooseUpload(replace, target) {
+                        var input = document.createElement("input");
+                        input.type = "file";
+                        input.accept = ".xml,.json";
+                        input.multiple = !replace;
+                        input.addEventListener(
+                            "change",
+                            action(async function () {
+                                var files = Array.from(input.files || []);
+                                if (!files.length) return;
+                                if (files.length > 10)
+                                    throw new Error("每批最多 10 个文件");
+                                var batchId = crypto.randomUUID();
+                                await req("ImportBatches", "POST", {
+                                    batchId: batchId,
+                                    mediaId: selected,
+                                    expectedVersion: state.version,
+                                    fileNames: files.map(function (f) {
+                                        return f.name;
+                                    }),
+                                    operation: replace ? "replace" : "append",
+                                    replaceFileId: target || null,
+                                });
+                                $("dm-batch").value = batchId;
+                                switchTab("tasks");
+                                for (var i = 0; i < files.length; i++) {
+                                    try {
+                                        await upload(batchId, i, files[i]);
+                                    } catch (error) {
+                                        report(error.message);
+                                    }
+                                }
+                                await tasks(0);
+                            }),
+                        );
+                        input.click();
+                    }
+                    function upload(batch, slot, file) {
+                        return new Promise(function (resolve, reject) {
+                            var xhr = new XMLHttpRequest();
+                            xhr.open(
+                                "POST",
+                                ApiClient.getUrl(
+                                    "Danmuku/ImportBatches/" +
+                                        encodeURIComponent(batch) +
+                                        "/Files/" +
+                                        slot,
+                                ),
+                            );
+                            xhr.setRequestHeader("Authorization", header());
+                            xhr.setRequestHeader(
+                                "Content-Type",
+                                "application/octet-stream",
+                            );
+                            xhr.upload.onprogress = function (e) {
+                                report(
+                                    file.name +
+                                        " · 上传 " +
+                                        (e.lengthComputable
+                                            ? Math.floor(
+                                                  (e.loaded / e.total) * 100,
+                                              ) + "%"
+                                            : "接收中"),
+                                );
+                            };
+                            xhr.onload = function () {
+                                if (xhr.status === 202) resolve();
+                                else
+                                    reject(
+                                        new Error(
+                                            file.name +
+                                                " 上传未接收（HTTP " +
+                                                xhr.status +
+                                                "），请查看位置状态",
+                                        ),
+                                    );
+                            };
+                            xhr.onerror = function () {
+                                reject(
+                                    new Error(
+                                        "连接中断，请刷新批次检查是否已接收；不自动重传",
+                                    ),
+                                );
+                            };
+                            xhr.send(file);
+                        });
+                    }
+                    async function fileList(start) {
+                        var result = await req(
+                            "Files?startIndex=" +
+                                start +
+                                "&limit=50&search=" +
+                                encodeURIComponent($("dm-file-search").value) +
+                                "&unbound=" +
+                                $("dm-unbound").checked,
+                        );
+                        paged(
+                            $("dm-files-list"),
+                            result,
+                            start,
+                            fileList,
+                            function (r, file) {
+                                line(
+                                    r,
+                                    file.storedFileName +
+                                        " · " +
+                                        file.format +
+                                        " · " +
+                                        file.commentCount +
+                                        " 条 · " +
+                                        file.sizeBytes +
+                                        " 字节 · 引用 " +
+                                        file.bindingCount +
+                                        " · " +
+                                        new Date(
+                                            file.importedAtUtcMs,
+                                        ).toLocaleString() +
+                                        " · " +
+                                        file.status,
+                                );
+                                button(
+                                    "详情",
+                                    async function () {
+                                        var d = await req(
+                                            "Files/" + file.fileId,
+                                        );
+                                        report(
+                                            "原名：" +
+                                                d.originalFileName +
+                                                "；大小：" +
+                                                d.sizeBytes +
+                                                " 字节；SHA-256：" +
+                                                d.contentHash,
+                                        );
+                                    },
+                                    r,
+                                );
+                                button(
+                                    "引用媒体",
+                                    function () {
+                                        return references(file.fileId, 0, r);
+                                    },
+                                    r,
+                                );
+                                button(
+                                    "下载原文件",
+                                    async function () {
+                                        var response = await fetch(
+                                            ApiClient.getUrl(
+                                                "Danmuku/Files/" +
+                                                    file.fileId +
+                                                    "/Original",
+                                            ),
+                                            {
+                                                headers: {
+                                                    Authorization: header(),
+                                                },
+                                            },
+                                        );
+                                        if (!response.ok)
+                                            throw new Error(
+                                                "下载失败 HTTP " +
+                                                    response.status,
+                                            );
+                                        var url = URL.createObjectURL(
+                                                await response.blob(),
+                                            ),
+                                            a = document.createElement("a");
+                                        a.href = url;
+                                        a.download = file.storedFileName;
+                                        a.click();
+                                        setTimeout(function () {
+                                            URL.revokeObjectURL(url);
+                                        }, 1000);
+                                    },
+                                    r,
+                                );
+                                button(
+                                    "绑定到已选媒体",
+                                    async function () {
+                                        if (!selected)
+                                            throw new Error(
+                                                "请先在媒体绑定中选择影片或单集",
+                                            );
+                                        await bindings();
+                                        await update(
+                                            Array.from(
+                                                new Set(
+                                                    state.fileIds.concat(
+                                                        file.fileId,
+                                                    ),
+                                                ),
+                                            ),
+                                            state.activeFileId,
+                                        );
+                                        report("已绑定，当前生效选择保持不变");
+                                    },
+                                    r,
+                                );
+                                button(
+                                    "删除文件本体",
+                                    async function () {
+                                        if (
+                                            confirm(
+                                                "永久删除无引用文件及其弹幕；此操作不能撤销。",
+                                            )
+                                        ) {
+                                            await req(
+                                                "Files/" + file.fileId,
+                                                "DELETE",
+                                            );
+                                            await fileList(start);
+                                        }
+                                    },
+                                    r,
+                                ).disabled = file.bindingCount > 0;
+                            },
+                        );
+                    }
+                    async function references(file, start, parent) {
+                        var old = parent.querySelector(".dm-references");
+                        if (old) old.remove();
+                        var host = document.createElement("div");
+                        host.className = "dm-references";
+                        parent.appendChild(host);
+                        var result = await req(
+                            "Files/" +
+                                file +
+                                "/Bindings?startIndex=" +
+                                start +
+                                "&limit=50",
+                        );
+                        paged(
+                            host,
+                            result,
+                            start,
+                            function (s) {
+                                return references(file, s, parent);
+                            },
+                            function (r, b) {
+                                button(
+                                    b.mediaId + " · " + b.checkStatus,
+                                    async function () {
+                                        selected = b.mediaId;
+                                        switchTab("media");
+                                        await bindings();
+                                    },
+                                    r,
+                                );
+                            },
+                        );
+                    }
+                    async function tasks(start) {
+                        taskStart = start;
+                        var batch = $("dm-batch").value.trim(),
+                            result = await req(
+                                "Imports?startIndex=" +
+                                    start +
+                                    "&limit=50" +
+                                    (batch
+                                        ? "&batchId=" +
+                                          encodeURIComponent(batch)
+                                        : ""),
+                            );
+                        var slots = $("dm-slots");
+                        slots.replaceChildren();
+                        if (result.batch) {
+                            line(
+                                slots,
+                                "批次 " +
+                                    result.batch.status +
+                                    " · 完成 " +
+                                    result.batch.slots.filter(function (s) {
+                                        return s.status === "Completed";
+                                    }).length +
+                                    "/" +
+                                    result.batch.slots.length,
+                            );
+                            result.batch.slots.forEach(function (s) {
+                                var r = row(slots);
+                                line(
+                                    r,
+                                    "位置 " +
+                                        (s.slot + 1) +
+                                        " " +
+                                        s.originalFileName +
+                                        " · " +
+                                        s.status +
+                                        " · " +
+                                        (s.stage || "") +
+                                        " · " +
+                                        (s.errorCode || ""),
+                                );
+                                if (
+                                    ![
+                                        "Completed",
+                                        "Failed",
+                                        "Cancelled",
+                                        "Expired",
+                                        "Interrupted",
+                                    ].includes(s.status)
+                                )
+                                    button(
+                                        "取消此位置",
+                                        async function () {
+                                            await req(
+                                                "ImportBatches/" +
+                                                    encodeURIComponent(batch) +
+                                                    "/Cancel",
+                                                "POST",
+                                                { slots: [s.slot] },
+                                            );
+                                            await tasks(start);
+                                        },
+                                        r,
+                                    );
+                            });
+                        }
+                        paged(
+                            $("dm-tasks-list"),
+                            result,
+                            start,
+                            tasks,
+                            function (r, t) {
+                                line(
+                                    r,
+                                    t.taskId +
+                                        " · " +
+                                        t.status +
+                                        " · " +
+                                        (t.stage || "") +
+                                        (t.stagePercent == null
+                                            ? ""
+                                            : " " +
+                                              t.stagePercent.toFixed(1) +
+                                              "%"),
+                                );
+                                line(
+                                    r,
+                                    "已处理 " +
+                                        t.processedComments +
+                                        " / 正常 " +
+                                        t.normalComments +
+                                        " / 异常 " +
+                                        t.abnormalComments +
+                                        " / 已导入 " +
+                                        t.importedComments +
+                                        " / 已跳过 " +
+                                        t.skippedComments +
+                                        (t.deadlineAtUtcMs
+                                            ? " · 到期 " +
+                                              new Date(
+                                                  t.deadlineAtUtcMs,
+                                              ).toLocaleString()
+                                            : ""),
+                                );
+                                if (t.errorCode) line(r, t.errorCode);
+                                if (t.status === "Completed")
+                                    line(r, "已提交：" + t.resultCode);
+                                button(
+                                    "异常明细",
+                                    function () {
+                                        return errors(t.taskId, 0);
+                                    },
+                                    r,
+                                );
+                                if (t.status === "AwaitingConfirmation")
+                                    button(
+                                        "跳过该文件全部异常",
+                                        async function () {
+                                            await req(
+                                                "Imports/" +
+                                                    t.taskId +
+                                                    "/ConfirmSkip",
+                                                "POST",
+                                                {},
+                                            );
+                                            await tasks(start);
+                                        },
+                                        r,
+                                    );
+                                if (t.status === "AwaitingConflictResolution")
+                                    button(
+                                        "刷新绑定并决定继续",
+                                        async function () {
+                                            var batchInfo = (
+                                                await req(
+                                                    "Imports?batchId=" +
+                                                        t.batchId,
+                                                )
+                                            ).batch;
+                                            var current = await req(
+                                                "Media/" +
+                                                    batchInfo.mediaId +
+                                                    "/Bindings",
+                                            );
+                                            if (
+                                                confirm(
+                                                    "当前版本 " +
+                                                        current.version +
+                                                        "；生效 " +
+                                                        (current.activeFileId ||
+                                                            "停用") +
+                                                        "；绑定 " +
+                                                        current.fileIds.join(
+                                                            ", ",
+                                                        ) +
+                                                        "。按此状态继续原导入/替换意图？",
+                                                )
+                                            ) {
+                                                await req(
+                                                    "Imports/" +
+                                                        t.taskId +
+                                                        "/Resume",
+                                                    "POST",
+                                                    {
+                                                        expectedVersion:
+                                                            current.version,
+                                                    },
+                                                );
+                                                await tasks(start);
+                                            }
+                                        },
+                                        r,
+                                    );
+                                if (
+                                    ![
+                                        "Completed",
+                                        "Failed",
+                                        "Cancelled",
+                                        "Expired",
+                                        "Interrupted",
+                                    ].includes(t.status)
+                                )
+                                    button(
+                                        "取消任务",
+                                        async function () {
+                                            await req(
+                                                "Imports/" +
+                                                    t.taskId +
+                                                    "/Cancel",
+                                                "POST",
+                                                {},
+                                            );
+                                            await tasks(start);
+                                        },
+                                        r,
+                                    );
+                            },
+                        );
+                    }
+                    async function errors(id, start) {
+                        var result = await req(
+                            "Imports/" +
+                                id +
+                                "/Errors?startIndex=" +
+                                start +
+                                "&limit=50",
+                        );
+                        paged(
+                            $("dm-errors"),
+                            result,
+                            start,
+                            function (s) {
+                                return errors(id, s);
+                            },
+                            function (r, e) {
+                                line(
+                                    r,
+                                    "源序 " +
+                                        e.sourceOrdinal +
+                                        " · " +
+                                        e.reasonCodes +
+                                        " · " +
+                                        (e.description || "") +
+                                        " · " +
+                                        (e.textSummary || ""),
+                                );
+                            },
+                        );
+                    }
+                    page.querySelectorAll("[data-tab]").forEach(function (b) {
+                        b.addEventListener(
+                            "click",
+                            action(async function () {
+                                switchTab(b.dataset.tab);
+                                if (tab === "settings") await settings();
+                                if (tab === "files") await fileList(0);
+                                if (tab === "tasks") await tasks(0);
+                            }),
+                        );
+                    });
+                    $("dm-search-media").onclick = action(function () {
+                        return media(0);
+                    });
+                    $("dm-abnormal").onclick = action(function () {
+                        return media(0, null, true);
+                    });
+                    $("dm-search-files").onclick = action(function () {
+                        return fileList(0);
+                    });
+                    $("dm-search-tasks").onclick = action(function () {
+                        return tasks(0);
+                    });
+                    $("dm-check").onclick = action(async function () {
+                        var id = (await req("BindingChecks", "POST", {}))
+                            .taskId;
+                        $("dm-check-result").textContent = "检查任务 " + id;
+                        async function poll() {
+                            if (!alive) return;
+                            var j = await req("BindingChecks/" + id);
+                            $("dm-check-result").textContent =
+                                j.status +
+                                " · 已查 " +
+                                j.processed +
+                                " / 缺失 " +
+                                j.missing +
+                                " / 查询失败 " +
+                                j.failed;
+                            if (["Queued", "Processing"].includes(j.status))
+                                setTimeout(function () {
+                                    poll().catch(function (e) {
+                                        report(e.message);
+                                    });
+                                }, 2000);
+                        }
+                        await poll();
+                    });
+                    $("dm-confirm-batch").onclick = action(async function () {
+                        var id = $("dm-batch").value.trim();
+                        if (!id) throw new Error("先指定批次 ID");
+                        await req(
+                            "ImportBatches/" +
+                                encodeURIComponent(id) +
+                                "/ConfirmSkip",
+                            "POST",
+                            {},
+                        );
+                        await tasks(taskStart);
+                    });
+                    $("dm-cancel-batch").onclick = action(async function () {
+                        var id = $("dm-batch").value.trim();
+                        if (!id) throw new Error("先指定批次 ID");
+                        await req(
+                            "ImportBatches/" +
+                                encodeURIComponent(id) +
+                                "/Cancel",
+                            "POST",
+                            {},
+                        );
+                        await tasks(taskStart);
+                    });
+                    page.addEventListener(
+                        "pageshow",
+                        action(async function () {
+                            alive = true;
+                            clearInterval(timer);
+                            timer = setInterval(function () {
+                                if (alive && tab === "tasks")
+                                    tasks(taskStart).catch(function (e) {
+                                        report(e.message);
+                                    });
+                            }, 3000);
+                            await settings();
+                            await media(0);
+                        }),
+                    );
+                    page.addEventListener("pagehide", function () {
+                        alive = false;
+                        clearInterval(timer);
+                        timer = null;
+                    });
+                })();
+            </script>
+        </div>
+    </body>
 </html>

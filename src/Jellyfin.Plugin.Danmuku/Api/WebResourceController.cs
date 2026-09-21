@@ -14,7 +14,7 @@ public sealed class WebResourceController : ControllerBase
     /// Static version of the fixed web resources. Bump it whenever the embedded
     /// bootstrap/danmuku assets change so clients revalidate cached copies.
     /// </summary>
-    public const string ResourceVersion = "m1-p1";
+    public const string ResourceVersion = "m1-v1";
 
     public const string BootstrapResourceName = "Jellyfin.Plugin.Danmuku.Web.bootstrap.js";
     public const string ScriptResourceName = "Jellyfin.Plugin.Danmuku.Web.danmuku.js";
@@ -38,6 +38,7 @@ public sealed class WebResourceController : ControllerBase
     /// a single enabled flag plus the fixed resource version, no other data.
     /// </summary>
     [HttpGet("Status")]
+    [HttpGet("BootstrapState")]
     [AllowAnonymous]
     public ActionResult<WebSupportStatus> GetStatus() =>
         new WebSupportStatus(_configuration.EnableWebSupport, ResourceVersion);
@@ -53,6 +54,16 @@ public sealed class WebResourceController : ControllerBase
     [HttpGet("Danmuku.css")]
     [AllowAnonymous]
     public ActionResult GetStylesheet() => GetEmbeddedResource(StylesheetResourceName, StylesheetContentType);
+
+    [HttpGet("Assets/{assetName}")]
+    [AllowAnonymous]
+    public ActionResult Asset(string assetName) => assetName switch
+    {
+        "bootstrap.js" => GetBootstrap(),
+        "danmuku.js" => GetScript(),
+        "danmuku.css" => GetStylesheet(),
+        _ => NotFound()
+    };
 
     private ActionResult GetEmbeddedResource(string resourceName, string contentType)
     {

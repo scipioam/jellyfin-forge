@@ -1,15 +1,17 @@
+using System.Text.Json.Serialization;
+
 namespace Jellyfin.Plugin.Danmuku.Import;
 
 public sealed record ImportBatchRequest(string BatchId, string MediaId, long ExpectedVersion,
-    IReadOnlyList<string> FileNames, string Operation = "append", string? ReplaceFileId = null);
+    IReadOnlyList<string> FileNames, string Operation = "append", [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? ReplaceFileId = null);
 
-public sealed record ImportSlotSnapshot(int Slot, string Status, string? TaskId, string OriginalFileName,
-    long ReceivedBytes, long? TotalBytes, long UploadDeadlineAtUtcMs, long? FinishedAtUtcMs, string? ErrorCode,
-    string? TaskStatus, string? Stage, double? StagePercent, long NormalComments, long AbnormalComments,
-    long ImportedComments, long SkippedComments, long? DeadlineAtUtcMs, string? ResultCode = null, string? FileId = null);
+public sealed record ImportSlotSnapshot(int Slot, string Status, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? TaskId, string OriginalFileName,
+    long ReceivedBytes, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? TotalBytes, long UploadDeadlineAtUtcMs, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? FinishedAtUtcMs, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? ErrorCode,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? TaskStatus, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Stage, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] double? StagePercent, long NormalComments, long AbnormalComments,
+    long ImportedComments, long SkippedComments, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? DeadlineAtUtcMs, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? ResultCode = null, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? FileId = null);
 
-public sealed record ImportBatchSnapshot(string BatchId, string MediaId, string Operation, string? ReplaceFileId,
-    long ExpectedVersion, string Status, long? FinishedAtUtcMs, IReadOnlyList<ImportSlotSnapshot> Slots);
+public sealed record ImportBatchSnapshot(string BatchId, string MediaId, string Operation, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? ReplaceFileId,
+    long ExpectedVersion, string Status, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? FinishedAtUtcMs, IReadOnlyList<ImportSlotSnapshot> Slots);
 
 public static class ImportLifecycleLimits
 {

@@ -1,7 +1,7 @@
 # 仓库约定
 
 - 本仓库是独立 Jellyfin 插件 monorepo，不是 Server/Web fork。仅修改本仓库，不触碰相邻项目。
-- `src/Jellyfin.Plugin.Danmuku` 负责弹幕；`src/Jellyfin.Plugin.AgentBridge` 负责外部 Agent 适配，不负责 AI 推理。当前仅实现插件骨架、各自配置页与管理员 health API。
+- `src/Jellyfin.Plugin.Danmuku` 负责弹幕；`src/Jellyfin.Plugin.AgentBridge` 负责外部 Agent 适配，不负责 AI 推理。Danmuku 的 M1 实现与验收进度见 `docs/SpecAndPlan/`；AgentBridge 当前仅实现插件骨架、配置页与管理员 health API。
 - 两插件独立 GUID、版本、配置、发布包；禁止互相引用、代理 API、共享数据库或建立 Core Plugin。版本分别维护在各自 `.csproj`，GUID 保持稳定。
 - 当前基线：.NET 10 / `net10.0`，Jellyfin Server 12.1，Controller/Model NuGet 12.1.0。依赖使用固定版本和提交的 `packages.lock.json`，不依赖 Server 源码。
 - `./build/build.sh`、`./build/test.sh` 可带 `danmuku` 或 `agentbridge` 参数；`package.sh`、`install-dev.sh`、`uninstall-dev.sh` 必须指定插件。产物位于 `artifacts/`。

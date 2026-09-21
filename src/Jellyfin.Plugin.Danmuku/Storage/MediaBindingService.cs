@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
@@ -27,7 +28,7 @@ public sealed class JellyfinMediaPresenceLookup(ILibraryManager library) : IMedi
     }
 }
 
-public sealed record MediaBindingSnapshot(string MediaId, long Version, string? ActiveFileId, bool IsDeactivated,
+public sealed record MediaBindingSnapshot(string MediaId, long Version, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? ActiveFileId, bool IsDeactivated,
     IReadOnlyList<string> FileIds, string CheckStatus);
 
 public sealed record BindingCheckJob(string JobId, string Status, long Processed, long Missing, long Failed);

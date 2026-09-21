@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import secrets
 import shutil
+import socket
 import sqlite3
 import subprocess
 import tempfile
@@ -81,6 +82,7 @@ def scenario(names):
     compose = data / 'compose.json'
     compose.write_text(json.dumps({'name': project, 'services': {'jellyfin': {
         'image': IMAGE, 'user': f'{os.getuid()}:{os.getgid()}',
+        'cpus': 1, 'mem_limit': '1g', 'environment': {'DOTNET_PROCESSOR_COUNT': '1'},
         'ports': ['127.0.0.1:18096:8096'],
         'volumes': [f'{data}/config:/config', f'{data}/cache:/cache', f'{data}/media:/media:ro'],
     }}}))
@@ -220,5 +222,13 @@ def scenario(names):
 
 
 if __name__ == '__main__':
-    results = [scenario(names) for names in [('Danmuku',), ('AgentBridge',), NAMES]]
-    (ROOT / 'artifacts/smoke/results.json').write_text(json.dumps(results, indent=2) + '\n')
+    prior = run('docker', 'ps', '-q', '--filter', 'label=com.docker.compose.project=jellyfin-forge-dev', capture_output=True).stdout.split()
+    try:
+        if prior: run('docker', 'stop', *prior)
+        with socket.socket() as probe:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            probe.bind(('127.0.0.1', 18096))
+        results = [scenario(names) for names in [('Danmuku',), ('AgentBridge',), NAMES]]
+        (ROOT / 'artifacts/smoke/results.json').write_text(json.dumps(results, indent=2) + '\n')
+    finally:
+        if prior: run('docker', 'start', *prior)

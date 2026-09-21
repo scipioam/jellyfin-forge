@@ -1,839 +1,582 @@
-/*
- * Danmuku player adapter (M1-P1).
- *
- * Responsibility: wait for Jellyfin Web SPA readiness, detect the video page,
- * bind the real video element / OSD, resolve the current media id, and render
- * a hardcoded danmaku set from video.currentTime. This is a contract spike,
- * not the P7 Canvas renderer or settings panel.
- *
- * P1 verification checklist:
- * 1. Poll until window.ApiClient and window.Events exist; never block playback.
- * 2. Route: Events.on(document, 'HISTORY_UPDATE') using state.location.pathname;
- *    hash is #/video with no itemId. Fallback: bubbling viewshow/viewhide when
- *    target.dataset.type === 'video-osd' or target.id === 'videoOsdPage'. [实测]
- * 3. Video: .videoPlayerContainer video or .htmlvideoplayer; no shadow DOM.
- * 4. Overlay sits on the video picture, pointer-events: none, OSD stays usable.
- * 5. Clock is video.currentTime only (pause / ratechange / seek). No wall-clock
- *    accumulation. Seek clears and repositions; no catch-up of skipped items.
- * 6. Media id via ApiClient.getJSON(Sessions) matching this DeviceId.
- *    DeviceId getter: ApiClient.deviceId(). [实测]
- * 7. Auth via ApiClient.getJSON/fetch only. Never send X-Emby-Token.
- * 8. OSD toggle on .osdControls: off clears immediately; on resumes at now.
- * 9. Leave page / switch media / logout (accessToken() null or /login): remove
- *    listeners, timers, and DOM. Re-entry must not duplicate them.
- * 10. Fullscreen element is document.documentElement on desktop. [实测]
- * 11. Picture-in-picture: do not create a PIP layer; pause this overlay.
- * 12. Danmaku text is textContent only (no HTML). Modes 1 / 4 / 5.
- */
-
+/* Jellyfin 12.1 adapter and bounded Canvas renderer. No normal-comment management list. */
 (function () {
-    'use strict';
-
-    if (document.documentElement.getAttribute('data-danmuku-p1') === '1') {
-        return;
+    "use strict";
+    if (window.DanmukuM1) return;
+    var current = null,
+        resolving = false,
+        lookupAbort = null,
+        generation = 0,
+        waitCount = 0;
+    var metrics = {
+        canvases: 0,
+        listeners: 0,
+        frames: 0,
+        timers: 0,
+        observers: 0,
+        requests: 0,
+        rendered: 0,
+        active: 0,
+        selected: 0,
+        peakActive: 0,
+        renderedModes: { 1: 0, 4: 0, 5: 0 },
+    };
+    window.DanmukuM1 = { metrics: metrics };
+    function api() {
+        return window.ApiClient;
     }
-    document.documentElement.setAttribute('data-danmuku-p1', '1');
-
-    var SCROLL_DURATION = 8;
-    var FIXED_DURATION = 4;
-    var SPA_POLL_MS = 50;
-    var SPA_GIVE_UP_MS = 60000;
-    var WATCH_MS = 400;
-    var MEDIA_POLL_TICKS = 5;
-    var FALLBACK_DURATION = 120;
-
-    var MODE_SCROLL = 1;
-    var MODE_BOTTOM = 4;
-    var MODE_TOP = 5;
-
-    var routeBound = false;
-    var toggleDelegateBound = false;
-    var playback = null;
-
-    var SAMPLE_TEXTS = [
-        'P1-01 scroll start',
-        'P1-02 top',
-        'P1-03 bottom',
-        'P1-04 small',
-        'P1-05 large',
-        'P1-06 <b>not html</b>',
-        'P1-07 <script>plain',
-        'P1-08 &amp; entities',
-        'P1-09 mid scroll',
-        'P1-10 top 2',
-        'P1-11 bottom 2',
-        'P1-12 mixed size',
-        'P1-13 later scroll',
-        'P1-14 top 3',
-        'P1-15 bottom 3',
-        'P1-16 quarter',
-        'P1-17 scroll',
-        'P1-18 top',
-        'P1-19 bottom',
-        'P1-20 half',
-        'P1-21 scroll',
-        'P1-22 top',
-        'P1-23 bottom',
-        'P1-24 three-quarter',
-        'P1-25 scroll',
-        'P1-26 top',
-        'P1-27 bottom',
-        'P1-28 late scroll',
-        'P1-29 late top',
-        'P1-30 end'
-    ];
-
-    function apiClient() {
-        return window.ApiClient || null;
+    function path() {
+        return location.hash.replace(/^#/, "").split("?")[0];
     }
-
-    function eventsApi() {
-        return window.Events || null;
+    function user() {
+        return api() && api().getCurrentUserId && api().getCurrentUserId();
     }
-
-    function isSpaReady() {
-        var api = apiClient();
-        var events = eventsApi();
-        return !!(api && events && typeof events.on === 'function' && typeof events.off === 'function');
+    function loggedIn() {
+        return api() && api().accessToken && api().accessToken() && user();
     }
-
-    function waitForSpa(done) {
-        if (isSpaReady()) {
-            done(true);
-            return;
-        }
-
-        var started = Date.now();
-        var timer = window.setInterval(function () {
-            if (isSpaReady()) {
-                window.clearInterval(timer);
-                done(true);
-                return;
-            }
-            if (Date.now() - started >= SPA_GIVE_UP_MS) {
-                window.clearInterval(timer);
-                done(false);
-            }
-        }, SPA_POLL_MS);
-    }
-
-    function hashPath() {
-        var hash = window.location.hash || '';
-        if (hash.charAt(0) === '#') {
-            hash = hash.slice(1);
-        }
-        if (hash.charAt(0) !== '/') {
-            hash = '/' + hash;
-        }
-        var query = hash.indexOf('?');
-        if (query >= 0) {
-            hash = hash.slice(0, query);
-        }
-        return hash;
-    }
-
-    function pathFromState(state) {
-        if (state && state.location && typeof state.location.pathname === 'string') {
-            return state.location.pathname;
-        }
-        return hashPath();
-    }
-
-    function isVideoPath(path) {
-        return path === '/video' || path.indexOf('/video/') === 0;
-    }
-
-    function isLoginPath(path) {
-        return path === '/login' || path.indexOf('/login/') === 0;
-    }
-
-    function isLoggedOut() {
-        var api = apiClient();
-        if (!api) {
-            return true;
-        }
-        if (typeof api.isLoggedIn === 'function' && !api.isLoggedIn()) {
-            return true;
-        }
-        if (typeof api.accessToken === 'function' && !api.accessToken()) {
-            return true;
-        }
-        return isLoginPath(hashPath());
-    }
-
-    function findVideo() {
-        return document.querySelector('.videoPlayerContainer video')
-            || document.querySelector('video.htmlvideoplayer')
-            || document.querySelector('.htmlvideoplayer');
-    }
-
-    function findHost(video) {
-        return document.querySelector('.videoPlayerContainer')
-            || (video && video.parentElement)
-            || null;
-    }
-
-    function findOsd() {
-        return document.querySelector('.osdControls');
-    }
-
-    function newPlaybackId() {
-        return 'p1-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
-    }
-
-    function durationOf(item) {
-        return item.mode === MODE_SCROLL ? SCROLL_DURATION : FIXED_DURATION;
-    }
-
-    function buildComments(duration) {
-        var total = duration && isFinite(duration) && duration > 2 ? duration : FALLBACK_DURATION;
-        var earlyEnd = Math.min(12, Math.max(4, total * 0.25));
-        var comments = [];
-        var i;
-        var modeCycle = [MODE_SCROLL, MODE_TOP, MODE_BOTTOM, MODE_SCROLL, MODE_SCROLL];
-        var sizeCycle = [25, 22, 22, 18, 36, 25, 28, 18, 32, 22];
-
-        for (i = 0; i < 30; i++) {
-            var time;
-            if (i < 12) {
-                time = 0.35 + (earlyEnd - 0.35) * (i / 11);
-            } else {
-                time = earlyEnd + (Math.max(total - earlyEnd - 0.4, 1) * ((i - 11) / 18));
-            }
-            comments.push({
-                id: 'p1-' + i,
-                time: time,
-                mode: modeCycle[i % modeCycle.length],
-                size: sizeCycle[i % sizeCycle.length],
-                lane: i % 4,
-                text: SAMPLE_TEXTS[i]
-            });
-        }
-
-        return comments;
-    }
-
-    function deviceIdOf(api) {
-        // [实测] Prefer ApiClient.deviceId(); keep short fallbacks for the spike.
-        if (api && typeof api.deviceId === 'function') {
-            return api.deviceId();
-        }
-        if (api && typeof api.deviceId === 'string') {
-            return api.deviceId;
-        }
-        if (api && typeof api.getDeviceId === 'function') {
-            return api.getDeviceId();
-        }
-        return '';
-    }
-
-    function readSessions(api) {
-        if (!api) {
-            return Promise.resolve([]);
-        }
-        if (typeof api.getJSON === 'function' && typeof api.getUrl === 'function') {
-            return api.getJSON(api.getUrl('Sessions'));
-        }
-        if (typeof api.getSessions === 'function') {
-            return api.getSessions();
-        }
-        return Promise.resolve([]);
-    }
-
-    function nowPlayingIdFromSessions(sessions, deviceId) {
-        var list = sessions;
-        if (!Array.isArray(list)) {
-            list = sessions && Array.isArray(sessions.Items) ? sessions.Items : [];
-        }
-
-        var i;
-        var session;
-        var sessionDeviceId;
-        var item;
-        for (i = 0; i < list.length; i++) {
-            session = list[i];
-            sessionDeviceId = session && (session.DeviceId || session.deviceId);
-            if (deviceId && sessionDeviceId === deviceId) {
-                item = session.NowPlayingItem || session.nowPlayingItem;
-                return item && (item.Id || item.id) ? (item.Id || item.id) : '';
-            }
-        }
-
-        return '';
-    }
-
-    function refreshMediaId(session) {
-        var api = apiClient();
-        var generation = session.id;
-        readSessions(api).then(function (sessions) {
-            if (!playback || playback.id !== generation) {
-                return;
-            }
-            var mediaId = nowPlayingIdFromSessions(sessions, deviceIdOf(api));
-            if (!mediaId) {
-                return;
-            }
-            if (playback.mediaId && playback.mediaId !== mediaId) {
-                onMediaSwitch(mediaId);
-                return;
-            }
-            playback.mediaId = mediaId;
-            if (playback.overlay) {
-                playback.overlay.setAttribute('data-danmuku-media-id', mediaId);
-            }
-        }).catch(function () {
-            return null;
-        });
-    }
-
-    function ensureHostPosition(host) {
-        if (!host) {
-            return false;
-        }
-        var style = window.getComputedStyle(host);
-        if (style.position === 'static') {
-            host.setAttribute('data-danmuku-rel', '1');
-            host.style.position = 'relative';
-            return true;
-        }
-        return false;
-    }
-
-    function restoreHostPosition(host) {
-        if (host && host.getAttribute('data-danmuku-rel') === '1') {
-            host.style.position = '';
-            host.removeAttribute('data-danmuku-rel');
-        }
-    }
-
-    function syncOverlayBox(session) {
-        if (!session.overlay || !session.video || !session.host) {
-            return;
-        }
-        var videoRect = session.video.getBoundingClientRect();
-        var hostRect = session.host.getBoundingClientRect();
-        session.overlay.style.left = (videoRect.left - hostRect.left) + 'px';
-        session.overlay.style.top = (videoRect.top - hostRect.top) + 'px';
-        session.overlay.style.width = Math.max(0, videoRect.width) + 'px';
-        session.overlay.style.height = Math.max(0, videoRect.height) + 'px';
-    }
-
-    function clearNodes(session) {
-        var id;
-        for (id in session.nodes) {
-            if (Object.prototype.hasOwnProperty.call(session.nodes, id) && session.nodes[id].parentNode) {
-                session.nodes[id].parentNode.removeChild(session.nodes[id]);
-            }
-        }
-        session.nodes = {};
-    }
-
-    function ensureItemNode(session, item) {
-        var node = session.nodes[item.id];
-        if (node) {
-            return node;
-        }
-        node = document.createElement('span');
-        node.className = 'danmuku-item';
-        node.setAttribute('data-danmuku-id', item.id);
-        node.textContent = item.text;
-        node.style.fontSize = item.size + 'px';
-        session.overlay.appendChild(node);
-        node.setAttribute('data-width', String(node.offsetWidth));
-        session.nodes[item.id] = node;
-        return node;
-    }
-
-    function placeItem(session, item, time) {
-        var span = durationOf(item);
-        var progress = (time - item.time) / span;
-        if (progress < 0 || progress >= 1) {
-            return false;
-        }
-
-        var width = session.overlay.clientWidth;
-        var height = session.overlay.clientHeight;
-        if (width < 8 || height < 8) {
-            return false;
-        }
-
-        var node = ensureItemNode(session, item);
-        var textWidth = parseFloat(node.getAttribute('data-width')) || node.offsetWidth;
-        var x;
-        var y;
-        var line = item.size + 8;
-
-        if (item.mode === MODE_SCROLL) {
-            x = width - progress * (width + textWidth);
-            y = 6 + item.lane * line;
-        } else if (item.mode === MODE_TOP) {
-            x = (width - textWidth) / 2;
-            y = 6 + item.lane * line;
-        } else {
-            x = (width - textWidth) / 2;
-            y = height - (item.lane + 1) * line - 6;
-        }
-
-        if (y < 0 || y + item.size > height) {
-            if (node.parentNode) {
-                node.parentNode.removeChild(node);
-            }
-            delete session.nodes[item.id];
-            return false;
-        }
-
-        node.style.transform = 'translate(' + x + 'px,' + y + 'px)';
-        return true;
-    }
-
-    function renderAt(session, time) {
-        if (!session.overlay || session.pip) {
-            return;
-        }
-        if (!session.enabled) {
-            clearNodes(session);
-            return;
-        }
-
-        syncOverlayBox(session);
-
-        var visible = {};
-        var i;
-        var item;
-        for (i = 0; i < session.comments.length; i++) {
-            item = session.comments[i];
-            if (placeItem(session, item, time)) {
-                visible[item.id] = true;
-            }
-        }
-
-        var id;
-        for (id in session.nodes) {
-            if (Object.prototype.hasOwnProperty.call(session.nodes, id) && !visible[id]) {
-                if (session.nodes[id].parentNode) {
-                    session.nodes[id].parentNode.removeChild(session.nodes[id]);
+    function request(route, signal) {
+        metrics.requests++;
+        return fetch(api().getUrl(route), {
+            signal: signal,
+            headers: {
+                Authorization:
+                    'MediaBrowser Client="Danmuku", Device="Web", DeviceId=' +
+                    JSON.stringify(api().deviceId()) +
+                    ', Version="0.2.0", Token=' +
+                    JSON.stringify(api().accessToken()),
+            },
+        })
+            .then(async function (r) {
+                if (!r.ok) {
+                    var e = new Error("HTTP " + r.status);
+                    e.status = r.status;
+                    throw e;
                 }
-                delete session.nodes[id];
-            }
-        }
+                return r.json();
+            })
+            .finally(function () {
+                metrics.requests--;
+            });
     }
-
-    function stopLoop(session) {
-        if (session.raf) {
-            window.cancelAnimationFrame(session.raf);
-            session.raf = 0;
-        }
+    function uuid() {
+        return crypto.randomUUID();
     }
-
-    function loop(session) {
-        if (!playback || playback !== session) {
+    function lower(value) {
+        // Jellyfin management JSON is PascalCase; playback payload is explicitly camelCase.
+        if (Array.isArray(value)) return value.map(lower);
+        if (value && typeof value === "object") {
+            var result = {};
+            Object.keys(value).forEach(function (k) {
+                result[k[0].toLowerCase() + k.slice(1)] = lower(value[k]);
+            });
+            return result;
+        }
+        return value;
+    }
+    function teardown() {
+        generation++;
+        if (lookupAbort) lookupAbort.abort();
+        if (current) current.dispose();
+        current = null;
+    }
+    function inspect() {
+        if (!loggedIn() || !/^\/?video(?:\/|$)/.test(path())) {
+            teardown();
             return;
         }
-        if (!session.video || session.video.paused || session.pip || session.seeking) {
-            session.raf = 0;
+        var video = document.querySelector(
+            ".videoPlayerContainer video, video.htmlvideoplayer",
+        );
+        var controls = document.querySelector(".osdControls");
+        if (!video) {
+            if (current) teardown();
             return;
         }
-        renderAt(session, session.video.currentTime);
-        session.raf = window.requestAnimationFrame(function () {
-            loop(session);
-        });
+        if (current && (current.video !== video || current.user !== user()))
+            teardown();
+        if (!controls) return;
+        if (current && (current.controls !== controls || !current.connected()))
+            current.mount(controls);
+        if (resolving) return;
+        resolving = true;
+        var ticket = generation;
+        var lookup = new AbortController();
+        lookupAbort = lookup;
+        request("Sessions", lookup.signal)
+            .then(function (items) {
+                if (
+                    ticket !== generation ||
+                    !loggedIn() ||
+                    !/^\/?video(?:\/|$)/.test(path())
+                )
+                    return;
+                var session = lower(
+                    Array.isArray(items)
+                        ? items
+                        : items.Items || items.items || [],
+                ).find(function (s) {
+                    return (
+                        s.deviceId === api().deviceId() &&
+                        s.nowPlayingItem &&
+                        s.nowPlayingItem.id
+                    );
+                });
+                var id =
+                    session &&
+                    session.nowPlayingItem &&
+                    session.nowPlayingItem.id;
+                if (!id) {
+                    metrics.diagnostic = "NoPlayingSession";
+                    return;
+                }
+                if (current && current.media !== id) teardown();
+                if (!current) {
+                    current = new Player(video, controls, id);
+                    metrics.diagnostic = "";
+                }
+            })
+            .catch(function (error) {
+                if (error.name !== "AbortError")
+                    metrics.diagnostic = String(error);
+            })
+            .finally(function () {
+                if (lookupAbort === lookup) lookupAbort = null;
+                resolving = false;
+            });
     }
-
-    function startLoop(session) {
-        if (!session.enabled || !session.video || session.video.paused || session.pip || session.seeking) {
-            return;
+    function Player(video, controls, media) {
+        var self = this,
+            disposed = false,
+            abort = null,
+            raf = 0,
+            timer = 0,
+            items = [],
+            active = [],
+            cursor = 0,
+            last = -1,
+            width = 0,
+            height = 0,
+            ratio = 1;
+        var display = { low: 15, medium: 30, high: 50 },
+            pending = false,
+            failedOnce = false,
+            pip = false,
+            loaded = false;
+        var key = "danmuku:m1:" + api().getUrl("Danmuku") + ":" + user();
+        var prefs = {
+            enabled: true,
+            density: "medium",
+            area: 100,
+            opacity: 75,
+            scale: 100,
+        };
+        try {
+            Object.assign(prefs, JSON.parse(localStorage.getItem(key) || "{}"));
+        } catch (_) {}
+        if (!["low", "medium", "high"].includes(prefs.density))
+            prefs.density = "medium";
+        if (![25, 50, 75, 100].includes(prefs.area)) prefs.area = 100;
+        prefs.opacity = Math.max(
+            10,
+            Math.min(100, Math.round((+prefs.opacity || 75) / 5) * 5),
+        );
+        prefs.scale = Math.max(
+            50,
+            Math.min(200, Math.round((+prefs.scale || 100) / 10) * 10),
+        );
+        prefs.enabled = prefs.enabled !== false;
+        this.video = video;
+        this.controls = controls;
+        this.connected = function () {
+            return (
+                canvas.isConnected && root.isConnected && message.isConnected
+            );
+        };
+        this.media = media;
+        this.user = user();
+        this.id = uuid();
+        var host =
+            video.closest(".videoPlayerContainer") || video.parentElement;
+        var canvas = document.createElement("canvas");
+        canvas.className = "danmuku-canvas";
+        canvas.setAttribute("aria-hidden", "true");
+        host.appendChild(canvas);
+        metrics.canvases++;
+        var ctx = canvas.getContext("2d");
+        var root = document.createElement("div");
+        root.className = "danmuku-controls";
+        var toggle = document.createElement("button");
+        toggle.type = "button";
+        toggle.className = "paper-icon-button-light";
+        toggle.textContent = "弹幕";
+        toggle.setAttribute("aria-label", "弹幕设置");
+        var panel = document.createElement("div");
+        panel.className = "danmuku-panel";
+        panel.hidden = true;
+        root.append(toggle, panel);
+        controls.appendChild(root);
+        var message = document.createElement("div");
+        message.className = "danmuku-message";
+        message.setAttribute("role", "status");
+        message.hidden = true;
+        host.appendChild(message);
+        var retry = document.createElement("button");
+        retry.type = "button";
+        retry.textContent = "重试弹幕";
+        retry.hidden = true;
+        root.appendChild(retry);
+        var subscriptions = [];
+        function listen(target, name, fn) {
+            target.addEventListener(name, fn);
+            subscriptions.push([target, name, fn]);
+            metrics.listeners++;
         }
-        if (!session.raf) {
-            session.raf = window.requestAnimationFrame(function () {
-                loop(session);
+        function save() {
+            try {
+                localStorage.setItem(key, JSON.stringify(prefs));
+            } catch (_) {}
+            rebuild();
+        }
+        function select(label, property, choices) {
+            var row = document.createElement("label");
+            row.textContent = label + " ";
+            var input = document.createElement("select");
+            input.setAttribute("aria-label", label);
+            choices.forEach(function (pair) {
+                var option = document.createElement("option");
+                option.value = pair[0];
+                option.textContent = pair[1];
+                input.appendChild(option);
+            });
+            input.value = String(prefs[property]);
+            row.appendChild(input);
+            panel.appendChild(row);
+            listen(input, "change", function () {
+                prefs[property] =
+                    property === "density"
+                        ? input.value
+                        : property === "enabled"
+                          ? input.value === "true"
+                          : +input.value;
+                save();
             });
         }
-    }
-
-    function onPlaying() {
-        if (!playback) {
-            return;
+        select("显示弹幕", "enabled", [
+            ["true", "开启"],
+            ["false", "关闭"],
+        ]);
+        select("密度", "density", [
+            ["low", "低"],
+            ["medium", "中"],
+            ["high", "高"],
+        ]);
+        select(
+            "区域",
+            "area",
+            [25, 50, 75, 100].map(function (v) {
+                return [v, v + "%"];
+            }),
+        );
+        select(
+            "不透明度",
+            "opacity",
+            Array.from({ length: 19 }, function (_, i) {
+                var v = 10 + i * 5;
+                return [v, v + "%"];
+            }),
+        );
+        select(
+            "字号",
+            "scale",
+            Array.from({ length: 16 }, function (_, i) {
+                var v = 50 + i * 10;
+                return [v, v + "%"];
+            }),
+        );
+        listen(toggle, "click", function () {
+            panel.hidden = !panel.hidden;
+        });
+        function notify(text) {
+            message.textContent = text;
+            message.hidden = false;
+            if (!timer) metrics.timers++;
+            clearTimeout(timer);
+            timer = setTimeout(function () {
+                message.hidden = true;
+                timer = 0;
+                metrics.timers--;
+            }, 4000);
         }
-        playback.seeking = false;
-        startLoop(playback);
-    }
-
-    function onPause() {
-        if (!playback || !playback.video) {
-            return;
-        }
-        stopLoop(playback);
-        renderAt(playback, playback.video.currentTime);
-    }
-
-    function onSeeking() {
-        if (!playback) {
-            return;
-        }
-        playback.seeking = true;
-        stopLoop(playback);
-        clearNodes(playback);
-    }
-
-    function onSeeked() {
-        if (!playback || !playback.video) {
-            return;
-        }
-        playback.seeking = false;
-        clearNodes(playback);
-        renderAt(playback, playback.video.currentTime);
-        startLoop(playback);
-    }
-
-    function onRateChange() {
-        if (!playback || !playback.video) {
-            return;
-        }
-        renderAt(playback, playback.video.currentTime);
-    }
-
-    function onLoadedMetadata() {
-        if (!playback || !playback.video) {
-            return;
-        }
-        playback.comments = buildComments(playback.video.duration);
-        clearNodes(playback);
-        renderAt(playback, playback.video.currentTime);
-    }
-
-    function onEnterPip() {
-        if (!playback) {
-            return;
-        }
-        playback.pip = true;
-        stopLoop(playback);
-        clearNodes(playback);
-        if (playback.overlay) {
-            playback.overlay.style.visibility = 'hidden';
-        }
-    }
-
-    function onLeavePip() {
-        if (!playback || !playback.video) {
-            return;
-        }
-        playback.pip = false;
-        if (playback.overlay) {
-            playback.overlay.style.visibility = '';
-        }
-        renderAt(playback, playback.video.currentTime);
-        startLoop(playback);
-    }
-
-    function unbindVideo(session) {
-        var video = session.video;
-        if (!video) {
-            return;
-        }
-        video.removeEventListener('playing', onPlaying);
-        video.removeEventListener('pause', onPause);
-        video.removeEventListener('seeking', onSeeking);
-        video.removeEventListener('seeked', onSeeked);
-        video.removeEventListener('ratechange', onRateChange);
-        video.removeEventListener('loadedmetadata', onLoadedMetadata);
-        video.removeEventListener('enterpictureinpicture', onEnterPip);
-        video.removeEventListener('leavepictureinpicture', onLeavePip);
-        session.video = null;
-    }
-
-    function bindVideo(session, video) {
-        if (session.video === video) {
-            return;
-        }
-        unbindVideo(session);
-        session.video = video;
-        if (!video) {
-            return;
-        }
-        video.addEventListener('playing', onPlaying);
-        video.addEventListener('pause', onPause);
-        video.addEventListener('seeking', onSeeking);
-        video.addEventListener('seeked', onSeeked);
-        video.addEventListener('ratechange', onRateChange);
-        video.addEventListener('loadedmetadata', onLoadedMetadata);
-        video.addEventListener('enterpictureinpicture', onEnterPip);
-        video.addEventListener('leavepictureinpicture', onLeavePip);
-        session.comments = buildComments(video.duration);
-        session.pip = !!(document.pictureInPictureElement && document.pictureInPictureElement === video);
-        if (!video.paused) {
-            startLoop(session);
-        } else {
-            renderAt(session, video.currentTime);
-        }
-    }
-
-    function ensureOverlay(session) {
-        var video = findVideo();
-        var host = findHost(video);
-        if (!video || !host) {
-            return;
-        }
-
-        if (session.host && session.host !== host) {
-            restoreHostPosition(session.host);
-            if (session.overlay && session.overlay.parentNode) {
-                session.overlay.parentNode.removeChild(session.overlay);
-            }
-            session.overlay = null;
-            session.hostTouched = false;
-        }
-
-        session.host = host;
-        session.hostTouched = ensureHostPosition(host) || session.hostTouched;
-
-        if (!session.overlay || !session.overlay.parentNode) {
-            session.overlay = document.createElement('div');
-            session.overlay.className = 'danmuku-layer';
-            session.overlay.setAttribute('aria-hidden', 'true');
-            session.overlay.setAttribute('data-danmuku-playback', session.id);
-            if (session.mediaId) {
-                session.overlay.setAttribute('data-danmuku-media-id', session.mediaId);
-            }
-            host.appendChild(session.overlay);
-            session.nodes = {};
-        }
-
-        bindVideo(session, video);
-        syncOverlayBox(session);
-    }
-
-    function setToggleState(button, enabled) {
-        button.setAttribute('aria-pressed', enabled ? 'true' : 'false');
-        button.title = enabled ? 'Danmuku on' : 'Danmuku off';
-    }
-
-    function toggleButtonFromEvent(event) {
-        if (!event || !event.target || !event.target.closest) {
-            return playback && playback.button ? playback.button : null;
-        }
-        return event.target.closest('button.danmuku-toggle');
-    }
-
-    function onToggleClick(event) {
-        if (event) {
-            event.preventDefault();
-            event.stopPropagation();
-        }
-        var button = toggleButtonFromEvent(event);
-        if (!button || !playback) {
-            return;
-        }
-        playback.enabled = !playback.enabled;
-        setToggleState(button, playback.enabled);
-        if (!playback.enabled) {
-            stopLoop(playback);
-            clearNodes(playback);
-            return;
-        }
-        if (playback.video) {
-            renderAt(playback, playback.video.currentTime);
-            startLoop(playback);
-        }
-    }
-
-    function onDocumentToggleClick(event) {
-        if (toggleButtonFromEvent(event)) {
-            onToggleClick(event);
-        }
-    }
-
-    function ensureToggle(session) {
-        var osd = findOsd();
-        if (!osd) {
-            return;
-        }
-        if (session.button && session.button.parentNode === osd) {
-            return;
-        }
-        if (session.button) {
-            session.button.removeEventListener('click', onToggleClick);
-            if (session.button.parentNode) {
-                session.button.parentNode.removeChild(session.button);
+        async function load(manual) {
+            if (pending || disposed) return;
+            pending = true;
+            retry.disabled = true;
+            abort = new AbortController();
+            try {
+                var response = lower(
+                    await request(
+                        "Danmuku/Playback/" +
+                            encodeURIComponent(media) +
+                            "?playbackId=" +
+                            encodeURIComponent(self.id),
+                        abort.signal,
+                    ),
+                );
+                if (disposed || current !== self) return;
+                items = response.items || [];
+                display = response.display || display;
+                loaded = true;
+                retry.hidden = true;
+                metrics.selected = items.length;
+                if (response.status === "Disabled") {
+                    root.hidden = true;
+                    items = [];
+                }
+                rebuild();
+                if (manual)
+                    notify(items.length ? "弹幕加载成功" : "当前无弹幕");
+            } catch (error) {
+                if (disposed || error.name === "AbortError") return;
+                retry.hidden = false;
+                if (manual || !failedOnce)
+                    notify(
+                        error.status === 410
+                            ? "弹幕请求已过期，请退出并重新进入播放"
+                            : "弹幕加载失败，可点击重试",
+                    );
+                failedOnce = true;
+            } finally {
+                pending = false;
+                retry.disabled = false;
+                abort = null;
             }
         }
-
-        var button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'paper-icon-button-light danmuku-toggle autoSize';
-        button.setAttribute('aria-label', 'Danmuku');
-        button.textContent = '弹';
-        setToggleState(button, session.enabled);
-        osd.appendChild(button);
-        session.button = button;
-        if (!toggleDelegateBound) {
-            document.addEventListener('click', onDocumentToggleClick, true);
-            toggleDelegateBound = true;
+        listen(retry, "click", function () {
+            load(true);
+        });
+        function geometry() {
+            var box = video.getBoundingClientRect(),
+                outer = host.getBoundingClientRect();
+            var aspect =
+                video.videoWidth && video.videoHeight
+                    ? video.videoWidth / video.videoHeight
+                    : box.width / Math.max(1, box.height);
+            width = Math.min(box.width, box.height * aspect);
+            height = Math.min(box.height, box.width / aspect);
+            ratio = Math.min(3, window.devicePixelRatio || 1);
+            canvas.style.left =
+                box.left - outer.left + (box.width - width) / 2 + "px";
+            canvas.style.top =
+                box.top - outer.top + (box.height - height) / 2 + "px";
+            canvas.style.width = width + "px";
+            canvas.style.height = height + "px";
+            canvas.width = Math.ceil(width * ratio);
+            canvas.height = Math.ceil(height * ratio);
+            ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
         }
-    }
-
-    function stopWatch(session) {
-        if (session.watch) {
-            window.clearInterval(session.watch);
-            session.watch = 0;
+        function startIndex(time) {
+            var lo = 0,
+                hi = items.length;
+            while (lo < hi) {
+                var mid = (lo + hi) >>> 1;
+                if (items[mid].timeMs < time * 1000) lo = mid + 1;
+                else hi = mid;
+            }
+            return lo;
         }
-    }
-
-    function watchTick(session) {
-        if (!playback || playback !== session) {
-            return;
+        function xAt(item, now) {
+            return item.mode === 1
+                ? width - ((now - item.start) / 8) * (width + item.width)
+                : (width - item.width) / 2;
         }
-        if (isLoggedOut()) {
-            leavePlayback();
-            return;
-        }
-        if (!isVideoPath(hashPath())) {
-            leavePlayback();
-            return;
-        }
-
-        ensureOverlay(session);
-        ensureToggle(session);
-        session.ticks += 1;
-        if (session.ticks % MEDIA_POLL_TICKS === 0) {
-            refreshMediaId(session);
-        }
-        if (session.video && session.video.paused && !session.seeking) {
-            renderAt(session, session.video.currentTime);
-        }
-    }
-
-    function onMediaSwitch(mediaId) {
-        if (!playback) {
-            return;
-        }
-        stopLoop(playback);
-        clearNodes(playback);
-        playback.mediaId = mediaId;
-        playback.id = newPlaybackId();
-        if (playback.overlay) {
-            playback.overlay.setAttribute('data-danmuku-playback', playback.id);
-            playback.overlay.setAttribute('data-danmuku-media-id', mediaId);
-        }
-        if (playback.video) {
-            playback.comments = buildComments(playback.video.duration);
-            renderAt(playback, playback.video.currentTime);
-            startLoop(playback);
-        }
-        refreshMediaId(playback);
-    }
-
-    function leavePlayback() {
-        if (!playback) {
-            return;
-        }
-        var session = playback;
-        playback = null;
-        stopLoop(session);
-        stopWatch(session);
-        unbindVideo(session);
-        clearNodes(session);
-        if (session.overlay && session.overlay.parentNode) {
-            session.overlay.parentNode.removeChild(session.overlay);
-        }
-        if (session.button) {
-            session.button.removeEventListener('click', onToggleClick);
-            if (session.button.parentNode) {
-                session.button.parentNode.removeChild(session.button);
+        function admit(item, now) {
+            var start = item.timeMs / 1000,
+                duration = item.mode === 1 ? 8 : 4;
+            if (
+                now >= start + duration ||
+                active.length >= display[prefs.density]
+            )
+                return;
+            var size = (item.fontSize * prefs.scale) / 100,
+                line = Math.ceil(size * 1.25),
+                area = (height * prefs.area) / 100;
+            if (line > area || size < 1) return;
+            ctx.font = size + "px sans-serif";
+            var textWidth = ctx.measureText(item.text).width;
+            var candidate = {
+                mode: item.mode,
+                start: start,
+                end: start + duration,
+                width: textWidth,
+                size: size,
+                text: item.text,
+                color: item.color,
+                line: line,
+                y: 0,
+            };
+            for (
+                var offset = 0;
+                offset + line <= area;
+                offset += Math.max(8, line)
+            ) {
+                candidate.y = item.mode === 4 ? area - offset - line : offset;
+                var collision = active.some(function (other) {
+                    if (
+                        other.y + other.line <= candidate.y ||
+                        candidate.y + line <= other.y
+                    )
+                        return false;
+                    if (other.mode !== 1 || candidate.mode !== 1) return true;
+                    var t = Math.min(other.end, candidate.end);
+                    return (
+                        xAt(candidate, now) <
+                            xAt(other, now) + other.width + 12 ||
+                        xAt(candidate, t) < xAt(other, t) + other.width + 12
+                    );
+                });
+                if (!collision) {
+                    active.push(candidate);
+                    metrics.rendered++;
+                    metrics.renderedModes[item.mode]++;
+                    return;
+                }
             }
         }
-        if (session.hostTouched) {
-            restoreHostPosition(session.host);
+        function draw(now) {
+            ctx.clearRect(0, 0, width, height);
+            if (!prefs.enabled || pip || !loaded) {
+                metrics.active = 0;
+                return;
+            }
+            active = active.filter(function (item) {
+                return item.end > now;
+            });
+            while (cursor < items.length && items[cursor].timeMs <= now * 1000)
+                admit(items[cursor++], now);
+            ctx.globalAlpha = prefs.opacity / 100;
+            ctx.textBaseline = "top";
+            ctx.lineWidth = 2;
+            active.forEach(function (item) {
+                ctx.font = item.size + "px sans-serif";
+                ctx.strokeStyle = "#000";
+                ctx.fillStyle = "#" + item.color.toString(16).padStart(6, "0");
+                var x = xAt(item, now);
+                ctx.strokeText(item.text, x, item.y);
+                ctx.fillText(item.text, x, item.y);
+            });
+            metrics.active = active.length;
+            metrics.peakActive = Math.max(metrics.peakActive, active.length);
+            last = now;
         }
-    }
-
-    function enterPlayback() {
-        if (isLoggedOut()) {
-            leavePlayback();
-            return;
+        function frame() {
+            raf = 0;
+            metrics.frames = 0;
+            if (disposed || pip) return;
+            var now = video.currentTime;
+            if (now < last || Math.abs(now - last) > 1) reset(now);
+            draw(now);
+            if (!video.paused && prefs.enabled) schedule();
         }
-        if (playback) {
-            return;
+        function schedule() {
+            if (!raf && !disposed && !pip) {
+                raf = requestAnimationFrame(frame);
+                metrics.frames = 1;
+            }
         }
-
-        playback = {
-            id: newPlaybackId(),
-            mediaId: '',
-            video: null,
-            host: null,
-            overlay: null,
-            button: null,
-            comments: buildComments(FALLBACK_DURATION),
-            nodes: {},
-            enabled: true,
-            raf: 0,
-            watch: 0,
-            ticks: 0,
-            hostTouched: false,
-            pip: false,
-            seeking: false
+        function reset(now) {
+            active = [];
+            cursor = startIndex(Math.max(0, now - 8));
+            last = now;
+        }
+        function rebuild() {
+            var started = performance.now(),
+                now = video.currentTime;
+            reset(now);
+            draw(now);
+            schedule();
+            metrics.lastRebuildMs = performance.now() - started;
+        }
+        listen(video, "play", schedule);
+        listen(video, "pause", function () {
+            if (raf) cancelAnimationFrame(raf);
+            raf = 0;
+            metrics.frames = 0;
+            draw(video.currentTime);
+        });
+        listen(video, "seeked", rebuild);
+        listen(video, "ratechange", rebuild);
+        listen(video, "loadedmetadata", function () {
+            geometry();
+            rebuild();
+        });
+        listen(video, "enterpictureinpicture", function () {
+            pip = true;
+            if (raf) cancelAnimationFrame(raf);
+            raf = 0;
+            metrics.frames = 0;
+            ctx.clearRect(0, 0, width, height);
+        });
+        listen(video, "leavepictureinpicture", function () {
+            pip = false;
+            rebuild();
+        });
+        var observer = new ResizeObserver(function () {
+            geometry();
+            rebuild();
+        });
+        observer.observe(video);
+        metrics.observers++;
+        geometry();
+        Promise.resolve().then(function () {
+            load(false);
+        });
+        this.mount = function (controls) {
+            // Jellyfin may rebuild its controls without starting a new playback.
+            // Move the existing nodes and retain the frozen collection and identifier.
+            host =
+                video.closest(".videoPlayerContainer") || video.parentElement;
+            host.append(canvas, message);
+            controls.appendChild(root);
+            self.controls = controls;
+            geometry();
+            rebuild();
         };
-
-        ensureOverlay(playback);
-        ensureToggle(playback);
-        refreshMediaId(playback);
-        playback.watch = window.setInterval(function () {
-            watchTick(playback);
-        }, WATCH_MS);
+        this.dispose = function () {
+            disposed = true;
+            if (abort) abort.abort();
+            if (raf) cancelAnimationFrame(raf);
+            if (timer) {
+                clearTimeout(timer);
+                metrics.timers--;
+            }
+            observer.disconnect();
+            metrics.observers--;
+            subscriptions.forEach(function (s) {
+                s[0].removeEventListener(s[1], s[2]);
+                metrics.listeners--;
+            });
+            canvas.remove();
+            root.remove();
+            message.remove();
+            items = [];
+            active = [];
+            metrics.canvases--;
+            metrics.frames = metrics.active = metrics.selected = 0;
+        };
     }
-
-    function onHistoryUpdate(event, state) {
-        var path = pathFromState(state);
-        if (isLoginPath(path) || isLoggedOut()) {
-            leavePlayback();
+    function start() {
+        if (!api() || !window.Events) {
+            if (++waitCount < 600) setTimeout(start, 100);
             return;
         }
-        if (isVideoPath(path)) {
-            enterPlayback();
-            return;
-        }
-        leavePlayback();
+        window.Events.on(document, "HISTORY_UPDATE", inspect);
+        document.addEventListener("viewhide", function () {
+            if (current && !/^\/?video(?:\/|$)/.test(path())) teardown();
+        });
+        window.addEventListener("hashchange", inspect);
+        // Adapter only: detects media/user changes in the target SPA. No Web-enabled status polling.
+        setInterval(inspect, 1000);
+        metrics.timers++;
+        inspect();
     }
-
-    function isVideoOsdTarget(target) {
-        if (!target || target.nodeType !== 1) {
-            return false;
-        }
-        return target.id === 'videoOsdPage' || (target.dataset && target.dataset.type === 'video-osd');
-    }
-
-    function onViewShow(event) {
-        if (isVideoOsdTarget(event.target)) {
-            enterPlayback();
-        }
-    }
-
-    function onViewHide(event) {
-        if (isVideoOsdTarget(event.target)) {
-            leavePlayback();
-        }
-    }
-
-    function onHashChange() {
-        onHistoryUpdate(null, null);
-    }
-
-    function bindRouteWatchers() {
-        if (routeBound) {
-            return;
-        }
-        routeBound = true;
-        eventsApi().on(document, 'HISTORY_UPDATE', onHistoryUpdate);
-        document.addEventListener('viewshow', onViewShow, false);
-        document.addEventListener('viewhide', onViewHide, false);
-        window.addEventListener('hashchange', onHashChange, false);
-        window.addEventListener('pagehide', leavePlayback, false);
-    }
-
-    waitForSpa(function (ready) {
-        if (!ready) {
-            return;
-        }
-        bindRouteWatchers();
-        onHistoryUpdate(null, null);
-    });
+    start();
 })();

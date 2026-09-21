@@ -41,18 +41,31 @@ Compose 使用相对于自身文件位置的 bind mount，不依赖开发主机�
 
 脚本只管理本仓库的开发实例，不用于远程正式实例。安装会先打包，再停止实例并替换对应插件文件，随后启动；卸载保留插件配置。手动替换文件同样应先停止实例，避免保留同一插件的多个版本。
 
-通过 Dashboard → Plugins 进入各插件配置页。骨架配置项为 `Instance label`。管理员 health 接口分别为 `GET /Danmuku/Health` 和 `GET /AgentBridge/Health`，使用 Jellyfin 管理员认证；匿名返回 401，成功响应包含 `Plugin`、`Status`、`Version`。
+通过 Dashboard → Plugins 进入各插件配置页。AgentBridge 的骨架配置项为 `Instance label`；Danmuku 提供媒体、文件、任务、设置四个功能区，保留该配置项。管理员 health 接口分别为 `GET /Danmuku/Health` 和 `GET /AgentBridge/Health`，使用 Jellyfin 管理员认证；匿名返回 401，成功响应包含 `Plugin`、`Status`、`Version`。
 
 ## Smoke 测试
 
-开发实例正在运行时，先停止它以释放固定端口：
+脚本会记录并暂停本仓库正在运行的开发实例，以释放固定端口；结束后恢复原先运行的实例，原先停止的实例保持停止：
 
 ```bash
-docker compose -f deploy/docker/dev/compose.yaml stop jellyfin
 ./build/smoke-test.sh
-./build/restart-dev.sh
 ```
 
 smoke 顺序验证 Danmuku 单独安装、AgentBridge 单独安装和两者共存，覆盖权限、配置页资源及配置保存/重启持久化。测试使用隔离账号和数据，结束后移除测试容器及网络，结果写入忽略目录 `artifacts/smoke/`。测试前已停止的开发实例无需为测试而启动；如为测试暂停了开发实例，结束后恢复。
 
 日志、截图、浏览器工具、真实样本及发布包不提交。验证报告只记录版本基线、方法、结果和必要的可复现条件；不记录开发主机身份、绝对目录或临时运行状态。
+
+### M1 可选 Web 入口
+
+默认开发环境不要求入口产物存在。需要验证播放器集成时运行：
+
+```bash
+python3 build/web-entry.py prepare --image jellyfin/jellyfin:12.1 \
+  --web-path /jellyfin/jellyfin-web --base-url / \
+  --output deploy/docker/dev/web-entry
+./build/restart-dev.sh
+```
+
+安装、卸载和 restart 脚本通过 `common.sh` 一致检测入口，并使用 `compose.web-entry.yaml` 加入单文件只读挂载。它们重建容器以应用宿主原子切换后的入口。镜像 ID 不匹配或生成文件被手工修改时停止；重新生成匹配入口后重试。Danmuku 卸载先撤销入口再移除程序目录；AgentBridge 不改 Danmuku 入口。所有配置、缓存、媒体和入口历史目录继续保留在忽略位置。
+
+浏览器与性能验证采用隔离容器，固定 18096，保存原开发实例状态并在结束时恢复。需要 FFmpeg（含 ffprobe）；先执行 `npm ci --prefix tests/browser`，再在 `tests/browser/` 执行 `npx playwright install --with-deps chromium firefox` 安装锁定版本及浏览器系统依赖，然后运行 `./build/test-browser.sh`；非根路径使用 `--base-url /jellyfin`。`./build/test-performance.sh` 执行默认/最大配置及两种视窗的完整测量，各场景关闭/开启弹幕分别连续播放十分钟，耗时较长。两个命令不要并行运行，原始证据位于 `artifacts/m1/integration/`。

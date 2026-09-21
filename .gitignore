@@ -91,3 +91,5 @@ test-results/
 
 # Temporary local working reports (phase reports, notes; not for version control)
 /temp/
+
+/deploy/docker/dev/web-entry/

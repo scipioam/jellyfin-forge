@@ -19,6 +19,12 @@ public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
     public override Guid Id => Guid.Parse(PluginId);
     public override string Description => "Independent danmuku management for Jellyfin.";
 
+    public override void UpdateConfiguration(BasePluginConfiguration configuration)
+    {
+        ((PluginConfiguration)configuration).Validate();
+        base.UpdateConfiguration(configuration);
+    }
+
     public IEnumerable<PluginPageInfo> GetPages() =>
     [
         new PluginPageInfo

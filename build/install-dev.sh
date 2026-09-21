@@ -23,4 +23,4 @@ if not dll.is_file():
     raise SystemExit(f'installed package is missing {dll.name}')
 print(f'Installed {name} into {target}')
 PY
-compose_dev up -d jellyfin
+compose_dev up -d --force-recreate jellyfin
