@@ -148,6 +148,19 @@ async function login(page, who = credentials.admin) {
     await page.locator(".homePage").first().waitFor({ timeout: 30000 });
 }
 async function play(page, overlay = true) {
+    if (new URL(page.url()).hash.startsWith("#/home")) {
+        // Let native home scrollers finish loading and their attached RAF run
+        // before detaching the page; rapid navigation otherwise races Jellyfin's
+        // emby-scrollbuttons attached/detached callbacks.
+        await page.locator(".homePage").first().waitFor();
+        await page.waitForLoadState("networkidle");
+        await page.evaluate(
+            () =>
+                new Promise((resolve) =>
+                    requestAnimationFrame(() => requestAnimationFrame(resolve)),
+                ),
+        );
+    }
     await page.evaluate((id) => {
         location.hash = "/details?id=" + id;
     }, item);
@@ -218,6 +231,44 @@ async function control(page, label, value) {
     await page
         .locator('.danmuku-controls button[aria-label="弹幕设置"]')
         .click({ force: true });
+}
+async function checkControlPlacement(page) {
+    await page.locator("video").first().hover({ force: true });
+    const placement = await page
+        .locator(".danmuku-controls")
+        .evaluate((root) => {
+            const favorite = document.querySelector(
+                ".osdControls .btnUserRating",
+            );
+            const toggle = root.querySelector('[aria-label="弹幕设置"]');
+            const a = toggle.getBoundingClientRect();
+            const b = favorite.getBoundingClientRect();
+            return {
+                inButtonRow: root.parentElement.classList.contains("buttons"),
+                beforeFavorite: root.nextElementSibling === favorite,
+                iconOnly:
+                    toggle.textContent.trim() === "" &&
+                    !!toggle.querySelector("svg"),
+                iconWidth: toggle.querySelector("svg").getBoundingClientRect()
+                    .width,
+                favoriteVisible: b.width > 0 && b.height > 0,
+                sameRow: Math.abs(a.y + a.height / 2 - b.y - b.height / 2) < 4,
+                toLeft: a.right <= b.left + 1,
+            };
+        });
+    assert(
+        placement.inButtonRow && placement.beforeFavorite && placement.iconOnly,
+        "icon must occupy the native button row immediately before favorite",
+    );
+    assert(
+        placement.iconWidth >= 20 && placement.iconWidth <= 40,
+        "icon must match native control scale",
+    );
+    if (placement.favoriteVisible)
+        assert(
+            placement.sameRow && placement.toLeft,
+            "danmuku icon must align on the same row to the left of favorite",
+        );
 }
 function p95(values) {
     assert.equal(values.length, 20);
@@ -530,6 +581,7 @@ function p95(values) {
                     .length,
                 requestsBeforeRemount,
             );
+            await checkControlPlacement(page);
             result.checks.push(
                 "control remount retains the current collection without a new playback request",
             );
@@ -607,8 +659,13 @@ function p95(values) {
             ["字号", 150],
         ])
             await control(page, label, value);
+        await checkControlPlacement(page);
         await page.screenshot({ path: path.join(dir, engine + "-player.png") });
         await page.setViewportSize({ width: 390, height: 844 });
+        await checkControlPlacement(page);
+        result.checks.push(
+            "icon-only control before favorite in the native button row, retained after remount, desktop and narrow viewport",
+        );
         await page.screenshot({ path: path.join(dir, engine + "-narrow.png") });
         await page
             .locator('.danmuku-controls button[aria-label="弹幕设置"]')

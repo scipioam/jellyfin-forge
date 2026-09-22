@@ -8,10 +8,11 @@
     display: inline-flex;
     position: relative;
     align-items: center;
-    gap: 0.4em;
+    flex: 0 0 auto;
+    gap: 0;
     color: #fff;
 }
-.danmuku-controls button {
+.danmuku-controls .danmuku-retry {
     cursor: pointer;
     color: inherit;
     background: #242424;
@@ -19,6 +20,11 @@
     border-radius: 4px;
     padding: 0.45em 0.7em;
     white-space: nowrap;
+}
+.danmuku-toggle svg {
+    display: block;
+    width: 1.8em;
+    height: 1.8em;
 }
 .danmuku-panel {
     position: absolute;

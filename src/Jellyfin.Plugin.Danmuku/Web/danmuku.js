@@ -206,14 +206,38 @@
         root.className = "danmuku-controls";
         var toggle = document.createElement("button");
         toggle.type = "button";
-        toggle.className = "paper-icon-button-light";
-        toggle.textContent = "弹幕";
+        toggle.className = "autoSize paper-icon-button-light danmuku-toggle";
+        toggle.title = "弹幕设置";
+        toggle.setAttribute("aria-expanded", "false");
+        var icon = document.createElementNS(
+            "http://www.w3.org/2000/svg",
+            "svg",
+        );
+        icon.setAttribute("viewBox", "0 0 24 24");
+        icon.setAttribute("class", "xlargePaperIconButton");
+        icon.setAttribute("aria-hidden", "true");
+        icon.setAttribute("focusable", "false");
+        var stroke = document.createElementNS(
+            "http://www.w3.org/2000/svg",
+            "path",
+        );
+        stroke.setAttribute(
+            "d",
+            "M4 5h16v12H9l-5 3V5Z M7 9h6 M16 9h1 M7 13h2 M12 13h5",
+        );
+        stroke.setAttribute("fill", "none");
+        stroke.setAttribute("stroke", "currentColor");
+        stroke.setAttribute("stroke-width", "1.8");
+        stroke.setAttribute("stroke-linejoin", "round");
+        stroke.setAttribute("stroke-linecap", "round");
+        icon.appendChild(stroke);
+        toggle.appendChild(icon);
         toggle.setAttribute("aria-label", "弹幕设置");
         var panel = document.createElement("div");
         panel.className = "danmuku-panel";
         panel.hidden = true;
         root.append(toggle, panel);
-        controls.appendChild(root);
+        placeControl(controls);
         var message = document.createElement("div");
         message.className = "danmuku-message";
         message.setAttribute("role", "status");
@@ -221,6 +245,7 @@
         host.appendChild(message);
         var retry = document.createElement("button");
         retry.type = "button";
+        retry.className = "danmuku-retry";
         retry.textContent = "重试弹幕";
         retry.hidden = true;
         root.appendChild(retry);
@@ -292,8 +317,29 @@
                 return [v, v + "%"];
             }),
         );
+        function placeControl(controls) {
+            var favorite = controls.querySelector(".btnUserRating");
+            var row = controls.querySelector(".buttons");
+            if (favorite) favorite.before(root);
+            else if (row) row.appendChild(root);
+        }
+        function placePanel() {
+            if (panel.hidden) return;
+            var box = root.getBoundingClientRect();
+            var panelWidth = panel.getBoundingClientRect().width;
+            panel.style.left =
+                Math.max(
+                    8 - box.left,
+                    Math.min(
+                        box.width - panelWidth,
+                        window.innerWidth - 8 - box.left - panelWidth,
+                    ),
+                ) + "px";
+        }
         listen(toggle, "click", function () {
             panel.hidden = !panel.hidden;
+            toggle.setAttribute("aria-expanded", String(!panel.hidden));
+            placePanel();
         });
         function notify(text) {
             message.textContent = text;
@@ -372,6 +418,7 @@
             canvas.width = Math.ceil(width * ratio);
             canvas.height = Math.ceil(height * ratio);
             ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+            placePanel();
         }
         function startIndex(time) {
             var lo = 0,
@@ -535,7 +582,7 @@
             host =
                 video.closest(".videoPlayerContainer") || video.parentElement;
             host.append(canvas, message);
-            controls.appendChild(root);
+            placeControl(controls);
             self.controls = controls;
             geometry();
             rebuild();
