@@ -39,7 +39,7 @@ Jellyfin Server 不属于本仓库，不维护 Server fork，当前也不维护 
 
 ## 验证与文档
 
-GitHub Actions 分别构建、测试和打包两个插件，并执行独立加载及共存 smoke、Danmuku HTTP/部署与 Chromium/Firefox 回归。长时间性能矩阵由 `workflow_dispatch` 单独触发。CI 上传构建产物，尚不自动发布 GitHub Release 或 Jellyfin 插件源。
+GitHub Actions 对纯文档 push／PR 跳过测试；开发分支代码 push 执行两插件构建、单测和打包，代码 PR 与 `main` 代码 push 另执行三组加载 smoke、Danmuku HTTP/部署及双浏览器双路径回归。下游任务复用同次运行的构建包；同一事件下的同分支／PR 新运行取消旧运行。手动入口可选择常规验证、性能长测或全部。具体触发规则、产物和覆盖限制见 [CI 策略](docs/ci.md)。CI 尚不自动发布 GitHub Release 或 Jellyfin 插件源。
 
 - [开发与集成测试](deploy/docker/dev/README.md)：仓库标准测试环境、脚本用法和隔离数据约定。
 - [部署说明](deploy/README.md)：向独立 Jellyfin 实例安装、升级和卸载插件。
