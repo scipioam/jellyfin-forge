@@ -73,32 +73,36 @@
                     <section data-section="settings" hidden>
                         <h3>设置</h3>
                         <form id="DanmukuConfigForm">
-                            <label
-                                >实例标签
-                                <input id="DanmukuInstanceLabel" type="text"
-                            /></label>
-                            <p>
+                            <fieldset id="dm-settings-fields" disabled>
                                 <label
-                                    ><input
-                                        type="checkbox"
-                                        id="DanmukuEnableWebSupport"
-                                    />启用 Jellyfin Web 弹幕</label
+                                    >实例标签
+                                    <input
+                                        id="DanmukuInstanceLabel"
+                                        type="text"
+                                /></label>
+                                <p>
+                                    <label
+                                        ><input
+                                            type="checkbox"
+                                            id="DanmukuEnableWebSupport"
+                                        />启用 Jellyfin Web 弹幕</label
+                                    >
+                                </p>
+                                <p>
+                                    保存后对新播放生效；已打开的播放页刷新后完全生效。用户密度档、区域、不透明度及字号偏好各自保存在浏览器。
+                                </p>
+                                <div id="dm-number-settings"></div>
+                                <button
+                                    is="emby-button"
+                                    type="submit"
+                                    class="raised button-submit"
                                 >
-                            </p>
-                            <p>
-                                保存后对新播放生效；已打开的播放页刷新后完全生效。用户密度档、区域、不透明度及字号偏好各自保存在浏览器。
-                            </p>
-                            <div id="dm-number-settings"></div>
-                            <button
-                                is="emby-button"
-                                type="submit"
-                                class="raised button-submit"
-                            >
-                                保存设置
-                            </button>
-                            <button type="button" id="dm-defaults">
-                                恢复默认数值
-                            </button>
+                                    保存设置
+                                </button>
+                                <button type="button" id="dm-defaults">
+                                    恢复默认数值
+                                </button>
+                            </fieldset>
                         </form>
                         <p id="dm-integration"></p>
                         <p>
@@ -108,6 +112,12 @@
                 </div>
             </div>
             <style>
+                #dm-settings-fields {
+                    border: 0;
+                    margin: 0;
+                    padding: 0;
+                    min-width: 0;
+                }
                 #DanmukuConfigPage section {
                     margin-top: 1.5em;
                 }
@@ -312,66 +322,95 @@
                         });
                         report("已恢复默认加载上限和密度，点击保存后生效。");
                     };
-                    async function settings() {
-                        var config =
-                            await ApiClient.getPluginConfiguration(pluginId);
-                        $("DanmukuInstanceLabel").value = config.InstanceLabel;
-                        $("DanmukuEnableWebSupport").checked =
-                            config.WebEnabled === true ||
-                            config.EnableWebSupport === true;
-                        fields.forEach(function (f) {
-                            $("dm-" + f[0]).value = config[f[0]];
-                        });
-                        var integration = await req("WebIntegration");
-                        $("dm-integration").textContent =
-                            "功能：" +
-                            (integration.enabled ? "已启用" : "已停用") +
-                            "；入口：" +
-                            ({
-                                MarkerDetected:
-                                    "检测到部署标记，浏览器需刷新核验",
-                                NotDeployed: "未检测到入口，请生成并重新部署",
-                                ReadFailed: "无法读取入口，请检查部署",
-                                Unavailable: "入口不可用，请检查 Web 路径",
-                            }[integration.entryStatus] ||
-                                integration.entryStatus) +
-                            "；资源版本：" +
-                            integration.resourceVersion;
+                    var settingsBusy = 0;
+                    function busySettings(busy) {
+                        settingsBusy += busy ? 1 : -1;
+                        $("dm-settings-fields").disabled = settingsBusy > 0;
+                        $("DanmukuConfigForm").setAttribute(
+                            "aria-busy",
+                            String(settingsBusy > 0),
+                        );
                     }
-                    $("DanmukuConfigForm").addEventListener(
-                        "submit",
-                        action(async function () {
+                    async function settings() {
+                        busySettings(true);
+                        try {
                             var config =
                                 await ApiClient.getPluginConfiguration(
                                     pluginId,
                                 );
-                            config.InstanceLabel = $(
-                                "DanmukuInstanceLabel",
-                            ).value;
-                            config.WebEnabled = config.EnableWebSupport = $(
-                                "DanmukuEnableWebSupport",
-                            ).checked;
+                            $("DanmukuInstanceLabel").value =
+                                config.InstanceLabel;
+                            $("DanmukuEnableWebSupport").checked =
+                                config.WebEnabled === true ||
+                                config.EnableWebSupport === true;
                             fields.forEach(function (f) {
-                                config[f[0]] = Number($("dm-" + f[0]).value);
+                                $("dm-" + f[0]).value = config[f[0]];
                             });
-                            if (
-                                config.ShortLoadLimit >
-                                    config.MediumLoadLimit ||
-                                config.MediumLoadLimit > config.LongLoadLimit ||
-                                config.LowDensity > config.MediumDensity ||
-                                config.MediumDensity > config.HighDensity
-                            )
-                                throw new Error(
-                                    "加载上限及密度三档均须按顺序非递减，设置未保存。",
+                            var integration = await req("WebIntegration");
+                            $("dm-integration").textContent =
+                                "功能：" +
+                                (integration.enabled ? "已启用" : "已停用") +
+                                "；入口：" +
+                                ({
+                                    MarkerDetected:
+                                        "检测到部署标记，浏览器需刷新核验",
+                                    NotDeployed:
+                                        "未检测到入口，请生成并重新部署",
+                                    ReadFailed: "无法读取入口，请检查部署",
+                                    Unavailable: "入口不可用，请检查 Web 路径",
+                                }[integration.entryStatus] ||
+                                    integration.entryStatus) +
+                                "；资源版本：" +
+                                integration.resourceVersion;
+                        } finally {
+                            busySettings(false);
+                        }
+                    }
+                    $("DanmukuConfigForm").addEventListener(
+                        "submit",
+                        action(async function () {
+                            if (settingsBusy) return;
+                            busySettings(true);
+                            try {
+                                // Capture the user's values before any asynchronous request.
+                                var draft = {};
+                                draft.InstanceLabel = $(
+                                    "DanmukuInstanceLabel",
+                                ).value;
+                                draft.WebEnabled = draft.EnableWebSupport = $(
+                                    "DanmukuEnableWebSupport",
+                                ).checked;
+                                fields.forEach(function (f) {
+                                    draft[f[0]] = Number($("dm-" + f[0]).value);
+                                });
+                                var config = Object.assign(
+                                    await ApiClient.getPluginConfiguration(
+                                        pluginId,
+                                    ),
+                                    draft,
                                 );
-                            await ApiClient.updatePluginConfiguration(
-                                pluginId,
-                                config,
-                            );
-                            report(
-                                "设置已保存，对新播放生效；打开的播放页需刷新。",
-                            );
-                            await settings();
+                                if (
+                                    config.ShortLoadLimit >
+                                        config.MediumLoadLimit ||
+                                    config.MediumLoadLimit >
+                                        config.LongLoadLimit ||
+                                    config.LowDensity > config.MediumDensity ||
+                                    config.MediumDensity > config.HighDensity
+                                )
+                                    throw new Error(
+                                        "加载上限及密度三档均须按顺序非递减，设置未保存。",
+                                    );
+                                await ApiClient.updatePluginConfiguration(
+                                    pluginId,
+                                    config,
+                                );
+                                report(
+                                    "设置已保存，对新播放生效；打开的播放页需刷新。",
+                                );
+                                await settings();
+                            } finally {
+                                busySettings(false);
+                            }
                         }),
                     );
                     async function media(start, parent, abnormal) {

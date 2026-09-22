@@ -302,6 +302,17 @@ function p95(values) {
                     count: data.selectedCount,
                 };
             }, item);
+        // Delay native configuration reads to reproduce the CI edit/load race.
+        let releaseSettings;
+        const settingsGate = new Promise((resolve) => {
+            releaseSettings = resolve;
+        });
+        const settingsRoute = /\/Plugins\/[^/]+\/Configuration(?:\?|$)/i;
+        const holdSettings = async (route) => {
+            if (route.request().method() === "GET") await settingsGate;
+            await route.continue();
+        };
+        await page.route(settingsRoute, holdSettings);
         // Actual registered plugin configuration route, not a standalone mock page.
         await page.goto(base + "/web/#/configurationpage?name=Danmuku");
         await page.locator("#DanmukuConfigPage").waitFor({ timeout: 30000 });
@@ -311,6 +322,17 @@ function p95(values) {
                 .locator('[data-section="' + section + '"]:visible')
                 .waitFor();
         }
+        assert(await page.locator("#dm-ShortLoadLimit").isDisabled());
+        assert(
+            await page
+                .locator("#DanmukuConfigForm button[type=submit]")
+                .isDisabled(),
+        );
+        releaseSettings();
+        await page.waitForFunction(
+            () => !document.querySelector("#dm-settings-fields").disabled,
+        );
+        await page.unroute(settingsRoute, holdSettings);
         await page.locator("#dm-ShortLoadLimit").fill("9000");
         await page.locator("#DanmukuConfigForm button[type=submit]").click();
         await page.waitForFunction(() =>
@@ -338,7 +360,7 @@ function p95(values) {
             path: path.join(dir, engine + "-management.png"),
         });
         result.checks.push(
-            "page identity, four sections, real configuration save, meaningful content",
+            "page identity, four sections, delayed settings load prevents editing until ready, invalid order rejected, real configuration save, meaningful content",
         );
         if (!performanceRun) {
             page.on("dialog", (dialog) => dialog.accept());
@@ -826,7 +848,10 @@ function p95(values) {
                 body[k[0].toUpperCase() + k.slice(1)] = v;
             body.EnableWebSupport = body.WebEnabled = false;
             await api("/Plugins/" + plugin + "/Configuration", body, "POST");
-            await page.goto(base + "/web/#/home");
+            // The contract requires a fresh document. Navigating to the same
+            // hash URL can remain a same-document navigation in Firefox.
+            await page.reload();
+            await page.locator(".homePage").first().waitFor();
             await play(page, false);
             assert.equal(await page.locator(".danmuku-controls").count(), 0);
             await page
@@ -840,7 +865,10 @@ function p95(values) {
             await page.route("**/Danmuku/Web/Danmuku.js*", (route) =>
                 route.fulfill({ status: 404, body: "" }),
             );
-            await page.goto(base + "/web/#/home");
+            // The contract requires a fresh document. Navigating to the same
+            // hash URL can remain a same-document navigation in Firefox.
+            await page.reload();
+            await page.locator(".homePage").first().waitFor();
             await play(page, false);
             assert.equal(await page.locator(".danmuku-canvas").count(), 0);
             await page
@@ -850,7 +878,10 @@ function p95(values) {
             await page.evaluate(() => (location.hash = "/home"));
             await page.locator(".homePage").first().waitFor();
             await page.unroute("**/Danmuku/Web/Danmuku.js*");
-            await page.goto(base + "/web/#/home");
+            // The contract requires a fresh document. Navigating to the same
+            // hash URL can remain a same-document navigation in Firefox.
+            await page.reload();
+            await page.locator(".homePage").first().waitFor();
             await play(page);
             await leave(page);
             result.checks.push(

@@ -118,3 +118,12 @@ Chromium 每轮在相同受控 GC 条件下记录堆，Firefox 结合资源计�
 按部署文档安装固定版本浏览器工具和 FFmpeg 后，依次执行 `./build/test.sh danmuku`、`./build/test.sh agentbridge`、`python3 -m unittest discover -s tests/integration -p 'test_*.py'`、两插件独立打包、`./build/smoke-test.sh`、`./build/test-browser.sh`、`./build/test-browser.sh --base-url /jellyfin`、`./build/test-performance.sh`。外部设计样本通过 `DANMUKU_SAMPLE_DIR` 提供并运行 `./build/test-danmuku-samples.sh`；未提供时不能把四项跳过当作通过。所有服务检查顺序占用固定 18096 端口。
 
 P10 的 H01–H10 仍需人工执行，特别是实际 Chrome/Edge、桌面全屏和主观播放体验。未实写 4 GiB 或进行磁盘耗尽测试；linux-arm64 原生资产已打包但未运行，Synology/SPK、Safari、移动浏览器和正式部署未验证。自动化样例以电影为主，不把服务层跨媒体测试等同于所有电视剧层级的人工操作验收。
+
+
+## 首次推送后的 CI 回归修复
+
+`b034146` 的 GitHub CI 中，两插件独立构建/测试/打包及三场景 smoke 通过；Danmuku 集成任务通过 HTTP、部署检查后，Chromium 在配置页非法顺序校验时超时，非根路径步骤未执行。失败截图显示原输入已被配置加载结果覆盖，不能把该次远端 CI 记为通过。
+
+修复管理表单的异步加载竞态：所有配置加载及保存完成前禁用字段和提交按钮；保存先固定用户输入快照，再等待配置请求。新增浏览器用例主动拦住配置响应，检查加载中不可编辑、加载完成后可编辑、非法顺序拒绝及合法保存。回归还发现 Firefox 对相同 hash 地址可能只执行同文档导航，脚本缺失用例现使用显式整页刷新，符合原验收的刷新要求。
+
+修复后根路径与 `/jellyfin` 非根路径的 HTTP、部署及 Chromium/Firefox 完整回归均通过，含主动延迟配置响应和显式刷新检查。本次重新构建并打包 Danmuku，0 警告、0 错误。仅配置页及浏览器测试发生变化，未重复执行播放性能长测，前文 80 分钟测量和两份 ZIP 哈希仍是 `b034146` 对应的历史证据。原始修复回归记录保存在忽略目录 `artifacts/m1/ci-fix/`。
