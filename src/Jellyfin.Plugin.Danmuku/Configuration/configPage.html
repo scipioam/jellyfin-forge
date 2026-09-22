@@ -289,6 +289,9 @@
                             host,
                         ).disabled = start + 50 >= result.totalCount;
                     }
+                    var limitHelp = document.createElement("p");
+                    limitHelp.textContent = "低／中档按画面占用 40%／65% 控制，高档防重叠，重叠档仅滚动弹幕允许相互覆盖。以下为独立保护上限，不是目标显示条数；四档均为 1–600 且按顺序非递减，只影响新播放。";
+                    $("dm-number-settings").appendChild(limitHelp);
                     var fields = [
                         ["ShortLoadLimit", "短于 30 分钟加载上限", 20000],
                         [
@@ -297,9 +300,10 @@
                             20000,
                         ],
                         ["LongLoadLimit", "长于 60 分钟加载上限", 20000],
-                        ["LowDensity", "低密度同屏条数", 100],
-                        ["MediumDensity", "中密度同屏条数", 100],
-                        ["HighDensity", "高密度同屏条数", 100],
+                        ["LowRenderLimit", "低档渲染保护上限", 600],
+                        ["MediumRenderLimit", "中档渲染保护上限", 600],
+                        ["HighRenderLimit", "高档渲染保护上限", 600],
+                        ["OverlapRenderLimit", "重叠档渲染保护上限", 600],
                     ];
                     fields.forEach(function (f) {
                         var label = document.createElement("label");
@@ -317,7 +321,7 @@
                     $("dm-defaults").onclick = function () {
                         fields.forEach(function (f, i) {
                             $("dm-" + f[0]).value = [
-                                5000, 8000, 10000, 15, 30, 50,
+                                5000, 8000, 10000, 100, 200, 400, 600,
                             ][i];
                         });
                         report("已恢复默认加载上限和密度，点击保存后生效。");
@@ -394,11 +398,12 @@
                                         config.MediumLoadLimit ||
                                     config.MediumLoadLimit >
                                         config.LongLoadLimit ||
-                                    config.LowDensity > config.MediumDensity ||
-                                    config.MediumDensity > config.HighDensity
+                                    config.LowRenderLimit > config.MediumRenderLimit ||
+                                    config.MediumRenderLimit > config.HighRenderLimit ||
+                                    config.HighRenderLimit > config.OverlapRenderLimit
                                 )
                                     throw new Error(
-                                        "加载上限及密度三档均须按顺序非递减，设置未保存。",
+                                        "加载上限及四档渲染保护上限均须按顺序非递减，设置未保存。",
                                     );
                                 await ApiClient.updatePluginConfiguration(
                                     pluginId,

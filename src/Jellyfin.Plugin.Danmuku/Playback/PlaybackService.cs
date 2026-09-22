@@ -8,7 +8,8 @@ using static Jellyfin.Plugin.Danmuku.Storage.ImportSql;
 namespace Jellyfin.Plugin.Danmuku.Playback;
 
 public sealed record PlaybackIdentity(string UserId, string SessionHash, string MediaId, long? DurationMs);
-public sealed record PlaybackDisplay(int Low, int Medium, int High);
+public sealed record RenderLimits(int Low, int Medium, int High, int Overlap);
+public sealed record PlaybackDisplay(string RenderVersion, RenderLimits Limits);
 public sealed record PlaybackPayload(string Status, string MediaId, string? FileId, string AlgorithmVersion, int LoadLimit,
     int SelectedCount, PlaybackDisplay Display, long ExpiresAtUtcMs, IReadOnlyList<PlaybackComment> Items);
 public sealed record PlaybackBudgets(long Bytes = 256L * 1024 * 1024, int Collections = 128, int Requests = 100000);
@@ -18,6 +19,7 @@ public interface IPlaybackSessionLookup { Task<bool> IsActiveAsync(string userId
 public sealed class PlaybackService(ISqliteConnectionFactory factory, ISqliteWriteCoordinator writes, DanmukuDataPaths paths,
     TimeProvider clock, IPlaybackSessionLookup sessions, PlaybackBudgets budgets) : IDisposable
 {
+    public const string RenderVersion = "m1-density-v1";
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Dictionary<string, CacheEntry> _live = new(StringComparer.Ordinal);
     private bool _initialized;
@@ -29,6 +31,7 @@ public sealed class PlaybackService(ISqliteConnectionFactory factory, ISqliteWri
     {
         if (!Guid.TryParseExact(id, "N", out _) && !Guid.TryParseExact(id, "D", out _)) throw new ImportOperationException("InvalidPlaybackId", 422, "Use a new UUID for each playback.");
         if (!config.WebEnabled) return new MemoryStream(JsonSerializer.SerializeToUtf8Bytes(new { status = "Disabled", items = Array.Empty<object>() }, Json));
+        config.Validate();
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
@@ -75,7 +78,7 @@ public sealed class PlaybackService(ISqliteConnectionFactory factory, ISqliteWri
                     var created = clock.GetUtcNow().ToUnixTimeMilliseconds();
                     expiry = created + 600000;
                     var payload = new PlaybackPayload(file is null ? "Empty" : "Ready", identity.MediaId, file, PlaybackSelector.Algorithm, limit, items.Count,
-                        new(config.LowDensity, config.MediumDensity, config.HighDensity), expiry, items);
+                        new(RenderVersion, new(config.LowRenderLimit, config.MediumRenderLimit, config.HighRenderLimit, config.OverlapRenderLimit)), expiry, items);
                     await using (var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 65536, FileOptions.Asynchronous))
                         await JsonSerializer.SerializeAsync(output, payload, Json, token).ConfigureAwait(false);
                     if (new FileInfo(path).Length > available) throw Capacity();

@@ -27,7 +27,7 @@ public sealed class PlaybackController(IAuthorizationContext authorization, ILib
     IDeviceManager devices, PlaybackService playback, PluginConfiguration configuration) : ControllerBase
 {
     [HttpGet("{itemId}")]
-    public async Task<IActionResult> Get(Guid itemId, string playbackId, CancellationToken ct)
+    public async Task<IActionResult> Get(Guid itemId, string playbackId, CancellationToken ct, string? renderVersion = null)
     {
         Response.Headers.CacheControl = "private, no-store";
         var auth = await authorization.GetAuthorizationInfo(HttpContext).ConfigureAwait(false);
@@ -39,6 +39,8 @@ public sealed class PlaybackController(IAuthorizationContext authorization, ILib
         if (user.HasPermission(PermissionKind.IsDisabled) || !user.HasPermission(PermissionKind.EnableMediaPlayback)) return Forbid();
         var item = library.GetItemById(itemId);
         if (item is not (Movie or Episode) || !item.IsVisibleStandalone(user) || !item.IsParentalAllowed(user, false)) return Forbid();
+        if (configuration.WebEnabled && renderVersion != PlaybackService.RenderVersion)
+            throw new ImportOperationException("RenderContractMismatch", 409, "Reload the player to use the current render contract.");
         var identity = new PlaybackIdentity(user.Id.ToString("N"), PlaybackService.SessionHash(auth.Token), itemId.ToString("N"), item.RunTimeTicks is > 0 ? item.RunTimeTicks / TimeSpan.TicksPerMillisecond : null);
         var stream = await playback.GetAsync(playbackId, identity, configuration, ct).ConfigureAwait(false);
         return File(stream, "application/json");

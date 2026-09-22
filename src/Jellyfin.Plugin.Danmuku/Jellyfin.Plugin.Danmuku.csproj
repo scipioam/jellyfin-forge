@@ -14,6 +14,7 @@
     <EmbeddedResource Include="Web/bootstrap.js">
       <LogicalName>Jellyfin.Plugin.Danmuku.Web.bootstrap.js</LogicalName>
     </EmbeddedResource>
+    <EmbeddedResource Include="Web/danmuku-layout.js" />
     <EmbeddedResource Include="Web/danmuku.js">
       <LogicalName>Jellyfin.Plugin.Danmuku.Web.danmuku.js</LogicalName>
     </EmbeddedResource>

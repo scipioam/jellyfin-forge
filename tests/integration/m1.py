@@ -232,6 +232,10 @@ class Instance:
             )
             self.admin = login["AccessToken"]
             self.admin_id = login["User"]["Id"]
+            # Startup can already be scanning an empty root. A refresh requested
+            # during that scan is coalesced and can miss the newly added folder.
+            self.wait(lambda: not any(t.get("Key") == "RefreshLibrary" and t.get("State") in ("Running", "Cancelling")
+                                     for t in self.request("/ScheduledTasks", token=self.admin)))
             self.request(
                 "/Library/VirtualFolders?name=M1&collectionType=movies&paths=%2Fmedia&refreshLibrary=true",
                 {},
@@ -646,7 +650,7 @@ class Instance:
         ]:
             self.request(route, {}, method=method, expected=401)
             self.request(route, {}, self.viewer, method=method, expected=403)
-        playback = "/Danmuku/Playback/" + self.item + "?playbackId=" + uuid.uuid4().hex
+        playback = "/Danmuku/Playback/" + self.item + "?renderVersion=m1-density-v1&playbackId=" + uuid.uuid4().hex
         self.request(playback, expected=401)
         self.request(playback, token=self.restricted, expected=403)
         self.request("/Danmuku/Files?limit=101", token=self.admin, expected=422)
@@ -663,6 +667,13 @@ class Instance:
             == config,
             "rejected configuration changed old values",
         )
+        for field in ["LowRenderLimit", "MediumRenderLimit", "HighRenderLimit", "OverlapRenderLimit"]:
+            missing = dict(config)
+            missing.pop(field)
+            self.request("/Plugins/" + PLUGIN + "/Configuration", missing, self.admin, expected=400)
+            check(self.request("/Plugins/" + PLUGIN + "/Configuration", token=self.admin) == config, "missing render limit changed config")
+        self.request(playback.replace("renderVersion=m1-density-v1&", ""), token=self.admin, expected=409)
+        self.request(playback.replace("m1-density-v1", "future"), token=self.admin, expected=409)
         batch = self.batch(["abnormal.json", "pending.xml"])
         task = self.task(
             batch,
@@ -727,6 +738,8 @@ class Instance:
             self.request(playback, token=self.viewer)["status"] == "Disabled",
             "disabled cache bypass",
         )
+        check(self.request(playback.replace("renderVersion=m1-density-v1&", ""), token=self.viewer)["status"] == "Disabled", "disabled must precede render contract mismatch")
+        self.request(playback.replace("renderVersion=m1-density-v1&", ""), token=self.restricted, expected=403)
         config["EnableWebSupport"] = config["WebEnabled"] = True
         self.request(
             "/Plugins/" + PLUGIN + "/Configuration", config, self.admin, expected=204
@@ -806,7 +819,7 @@ class Instance:
             "/Users/AuthenticateByName", {"Username": "m1-viewer", "Pw": self.password}
         )["AccessToken"]
         restart_playback = (
-            "/Danmuku/Playback/" + self.item + "?playbackId=" + uuid.uuid4().hex
+            "/Danmuku/Playback/" + self.item + "?renderVersion=m1-density-v1&playbackId=" + uuid.uuid4().hex
         )
         self.request(restart_playback, token=self.admin)
         run(*self.command, "restart", "jellyfin", capture_output=True)

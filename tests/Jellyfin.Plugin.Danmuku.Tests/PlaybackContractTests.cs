@@ -20,8 +20,36 @@ public sealed class PlaybackContractTests
         Assert.Throws<ArgumentException>(() => new PluginConfiguration { ShortLoadLimit = 0 }.Validate());
         Assert.Throws<ArgumentException>(() => new PluginConfiguration { LongLoadLimit = 20001 }.Validate());
         Assert.Throws<ArgumentException>(() => new PluginConfiguration { ShortLoadLimit = 9000 }.Validate());
-        Assert.Throws<ArgumentException>(() => new PluginConfiguration { HighDensity = 101 }.Validate());
-        Assert.Throws<ArgumentException>(() => new PluginConfiguration { LowDensity = 31 }.Validate());
+        Assert.Throws<ArgumentException>(() => new PluginConfiguration { OverlapRenderLimit = 601 }.Validate());
+        Assert.Throws<ArgumentException>(() => new PluginConfiguration { LowRenderLimit = 201 }.Validate());
+    }
+
+    [Fact]
+    public void RenderLimitPresenceIsRequiredOnlyWhenSavingAndFlagsNeverSerialize()
+    {
+        var old = new System.Xml.Serialization.XmlSerializer(typeof(PluginConfiguration));
+        using var input = new StringReader("<PluginConfiguration><LowDensity>15</LowDensity><WebEnabled>true</WebEnabled></PluginConfiguration>");
+        var config = (PluginConfiguration)old.Deserialize(input)!;
+        config.Validate();
+        Assert.Equal((100, 200, 400, 600), (config.LowRenderLimit, config.MediumRenderLimit, config.HighRenderLimit, config.OverlapRenderLimit));
+        Assert.Throws<ArgumentException>(() => config.Validate(true));
+        var json = JsonSerializer.Serialize(config);
+        Assert.DoesNotContain("supplied", json);
+        JsonSerializer.Deserialize<PluginConfiguration>(json)!.Validate(true);
+        foreach (var name in new[] { "LowRenderLimit", "MediumRenderLimit", "HighRenderLimit", "OverlapRenderLimit" })
+        {
+            var fields = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json)!;
+            fields.Remove(name);
+            Assert.Throws<ArgumentException>(() => JsonSerializer.Deserialize<PluginConfiguration>(JsonSerializer.Serialize(fields))!.Validate(true));
+        }
+        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<PluginConfiguration>("{\"LowRenderLimit\":1.5}"));
+        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<PluginConfiguration>("{\"LowRenderLimit\":null}"));
+        new PluginConfiguration { LowRenderLimit = 1, MediumRenderLimit = 1, HighRenderLimit = 1, OverlapRenderLimit = 1 }.Validate(true);
+        new PluginConfiguration { LowRenderLimit = 600, MediumRenderLimit = 600, HighRenderLimit = 600, OverlapRenderLimit = 600 }.Validate(true);
+        Assert.Throws<ArgumentException>(() => new PluginConfiguration { MediumRenderLimit = 401 }.Validate());
+        Assert.Throws<ArgumentException>(() => new PluginConfiguration { OverlapRenderLimit = 399 }.Validate());
+        Assert.Throws<ArgumentException>(() => new PluginConfiguration { LowRenderLimit = 0 }.Validate());
+        Assert.Throws<ArgumentException>(() => new PluginConfiguration { HighRenderLimit = 601 }.Validate());
     }
 
     [Fact]
@@ -34,10 +62,14 @@ public sealed class PlaybackContractTests
         var identity = Identity();
         var responses = await Task.WhenAll(Enumerable.Range(0, 6).Select(_ => Read(service, id, identity)));
         Assert.All(responses, r => Assert.Equal(responses[0], r));
+        using var payload = JsonDocument.Parse(responses[0]);
+        var display = payload.RootElement.GetProperty("display");
+        Assert.Equal("m1-density-v1", display.GetProperty("renderVersion").GetString());
+        Assert.Equal(600, display.GetProperty("limits").GetProperty("overlap").GetInt32());
         Assert.Equal(1, x.Scalar("SELECT COUNT(*) FROM PlaybackRequests"));
         var state = await x.Bindings.ReadAsync("media");
         await x.Bindings.UpdateAsync("media", state.Version, [], null);
-        Assert.Equal(responses[0], await Read(service, id, identity, new() { WebEnabled = true, ShortLoadLimit = 2 }));
+        Assert.Equal(responses[0], await Read(service, id, identity, new() { WebEnabled = true, ShortLoadLimit = 2, LowRenderLimit = 1, MediumRenderLimit = 2, HighRenderLimit = 3, OverlapRenderLimit = 4 }));
         Assert.Contains("Disabled", await Read(service, id, identity, new()));
         Assert.Equal(409, (await Assert.ThrowsAsync<ImportOperationException>(() => Read(service, id, identity with { UserId = "other" }))).StatusCode);
         Assert.Equal(409, (await Assert.ThrowsAsync<ImportOperationException>(() => Read(service, id, identity with { SessionHash = "other" }))).StatusCode);

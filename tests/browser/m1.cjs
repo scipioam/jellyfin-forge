@@ -19,6 +19,7 @@ const plugin = "6f79690c-c1d0-4738-b241-09aaa2c570e7";
 const auth = (token) =>
     'MediaBrowser Client="M1 Browser", Device="Test", DeviceId="forge-m1-browser-helper", Version="0.2.0", Token=' +
     JSON.stringify(token);
+const { installObserver, assertLatency } = require("./density-observer.cjs");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function redact(value) {
     let text = String(value);
@@ -59,7 +60,7 @@ async function sha256File(file) {
     for await (const chunk of fs.createReadStream(file)) hash.update(chunk);
     return hash.digest("hex");
 }
-async function seed() {
+async function seed(maximum = false) {
     const binding = await api("/Danmuku/Media/" + item + "/Bindings");
     const batch = await api(
         "/Danmuku/ImportBatches",
@@ -74,16 +75,16 @@ async function seed() {
     const fixture = path.join(dir, "synthetic.json");
     const fd = fs.openSync(fixture, "w");
     fs.writeSync(fd, "[");
-    const count = performanceRun ? 300000 : 4000;
+    const count = maximum ? 20000 : performanceRun ? 300000 : 4000;
     for (let i = 0; i < count; i++)
         fs.writeSync(
             fd,
             (i ? "," : "") +
                 JSON.stringify({
-                    progress: Math.floor((i * 3699000) / count),
-                    content: "弹幕 synthetic " + i,
-                    mode: [1, 1, 1, 4, 5][i % 5],
-                    fontsize: [18, 25, 36][i % 3],
+                    progress: maximum ? (i < 4800 ? 120000 + Math.floor(i * 12.5) : Math.floor(((i - 4800) * 3699000) / (count - 4800))) : Math.floor((i * 3699000) / count),
+                    content: "弹幕 synthetic " + i + (maximum && i % 11 === 0 ? " 🎉" : ""),
+                    mode: maximum && i < 4800 ? 1 : [1, 1, 1, 4, 5][i % 5],
+                    fontsize: maximum && i < 4800 ? 25 : [18, 25, 36][i % 3],
                     color: 16777215,
                 }),
         );
@@ -199,7 +200,7 @@ async function play(page, overlay = true) {
     );
     if (overlay)
         await page.waitForFunction(
-            () => window.DanmukuM1 && DanmukuM1.metrics.selected > 0,
+            () => window.DanmukuM1 && DanmukuM1.metrics.selected > 0 && DanmukuM1.operation?.phase === "committed",
             undefined,
             { timeout: 30000 },
         );
@@ -315,7 +316,7 @@ function p95(values) {
                     ? "disabled by --disable-gpu"
                     : "browser default",
         },
-        source: await seed(),
+        source: await seed(!performanceRun),
         checks: [],
         performance: [],
     };
@@ -362,21 +363,9 @@ function p95(values) {
     });
     try {
         result.browser = browser.version();
+        await page.addInitScript(installObserver);
         await login(page);
         assert((await page.title()).length > 0);
-        if (performanceRun)
-            result.firstSelection = await page.evaluate(async (id) => {
-                const start = performance.now();
-                const data = await ApiClient.getJSON(
-                    ApiClient.getUrl("Danmuku/Playback/" + id, {
-                        playbackId: crypto.randomUUID(),
-                    }),
-                );
-                return {
-                    elapsed: performance.now() - start,
-                    count: data.selectedCount,
-                };
-            }, item);
         // Delay native configuration reads to reproduce the CI edit/load race.
         let releaseSettings;
         const settingsGate = new Promise((resolve) => {
@@ -932,7 +921,7 @@ function p95(values) {
                 await page
                     .locator('.danmuku-panel select[aria-label="密度"]')
                     .inputValue(),
-                "medium",
+                "high",
             );
             await leave(page);
             const config = await api("/Plugins/" + plugin + "/Configuration"),
@@ -981,20 +970,24 @@ function p95(values) {
                 "resources remain released after logout, ordinary user playback, preferences isolated in same browser, disabled and missing-script states preserve video playback, re-enable works",
             );
         }
+        if (!performanceRun) result.density = await require('./density-checks.cjs').checks({ page, play, leave, dir, engine, api, plugin });
         if (performanceRun) {
-            for (const maximum of [false, true])
+            for (const maximum of [false, true]) {
+                const source = maximum ? await seed(true) : result.source;
                 for (const viewport of [
                     { width: 1440, height: 900 },
                     { width: 390, height: 844 },
                 ]) {
                     const record = {
                         maximum,
+                        source,
                         viewport,
                         load: [],
                         settings: [],
                         seek: [],
                         frames: [],
                     };
+                    result.inProgress = record;
                     const cfg = await api(
                         "/Plugins/" + plugin + "/Configuration",
                     ); // write PascalCase to Jellyfin's native configuration API
@@ -1002,85 +995,72 @@ function p95(values) {
                     for (const [k, v] of Object.entries(cfg))
                         body[k[0].toUpperCase() + k.slice(1)] = v;
                     body.LongLoadLimit = maximum ? 20000 : 10000;
-                    body.MediumDensity = maximum ? 100 : 30;
-                    body.HighDensity = maximum ? 100 : 50;
+                    body.MediumRenderLimit = 200;
+                    body.HighRenderLimit = 400;
+                    body.OverlapRenderLimit = 600;
                     await api(
                         "/Plugins/" + plugin + "/Configuration",
                         body,
                         "POST",
                     );
                     await page.setViewportSize(viewport);
+                    await page.evaluate(maximum => {
+                        const key = 'danmuku:m1:' + ApiClient.getUrl('Danmuku') + ':' + ApiClient.getCurrentUserId();
+                        localStorage.setItem(key, JSON.stringify({ enabled: true, densityModeV2: maximum ? 'overlap' : 'high', area: 75, scale: 100, opacity: 75 }));
+                    }, maximum);
                     for (let i = 0; i < 21; i++) {
-                        const measured = await page.evaluate(async (id) => {
-                            const start = performance.now();
-                            const data = await ApiClient.getJSON(
-                                ApiClient.getUrl("Danmuku/Playback/" + id, {
-                                    playbackId: crypto.randomUUID(),
-                                }),
-                            );
-                            return {
-                                elapsed: performance.now() - start,
-                                count: data.selectedCount,
-                            };
-                        }, item);
+                        await page.evaluate(() => { densitySamples.length = 0; });
+                        await play(page);
+                        const measured = await page.evaluate(() => {
+                            const s = densitySamples.at(-1);
+                            if (!s || s.playbackId !== DanmukuM1.operation.playbackId) throw Error('No matching load commit');
+                            return { ...s, elapsed: s.committedAt - s.startedAt, count: DanmukuM1.metrics.selected };
+                        });
                         assert.equal(measured.count, maximum ? 20000 : 10000);
-                        if (i === 0) record.firstMeasured = measured.elapsed;
-                        else record.load.push(measured.elapsed);
+                        if (i === 0) record.firstMeasured = measured; else record.load.push(measured);
+                        await leave(page);
                     }
-                    record.loadP95 = p95(record.load);
-                    assert(
-                        record.loadP95 <= 2000,
-                        "load P95 " + record.loadP95,
-                    );
+                    assertLatency(record.load, 2000);
+                    record.loadP95 = p95(record.load.map(s => s.elapsed));
                     await play(page);
-                    await control(page, "密度", "medium");
-                    await control(page, "区域", 100);
-                    await control(page, "字号", 100);
-                    await control(page, "不透明度", 75);
+                    await page.locator('video').first().evaluate(v => v.pause());
                     for (let i = 0; i < 20; i++) {
-                        record.settings.push(
-                            await page.evaluate(async (i) => {
-                                const s = document.querySelector(
-                                    '.danmuku-panel select[aria-label="区域"]',
-                                );
-                                const start = performance.now();
-                                s.value = i % 2 ? "100" : "75";
-                                s.dispatchEvent(new Event("change"));
-                                await new Promise(requestAnimationFrame);
-                                return performance.now() - start;
-                            }, i),
-                        );
-                        record.seek.push(
-                            await page.evaluate(async (i) => {
-                                const v = document.querySelector("video");
-                                v.pause();
-                                return await new Promise((resolve) => {
-                                    v.addEventListener(
-                                        "seeked",
-                                        () => {
-                                            const start =
-                                                performance.now() -
-                                                (DanmukuM1.metrics
-                                                    .lastRebuildMs || 0);
-                                            requestAnimationFrame(() =>
-                                                resolve(
-                                                    performance.now() - start,
-                                                ),
-                                            );
-                                        },
-                                        { once: true },
-                                    );
-                                    v.currentTime = 20 + i * 3;
-                                });
-                            }, i),
-                        );
+                        record.seek.push(await page.evaluate(i => measureDensityOperation('seek', () => {
+                            document.querySelector('video').currentTime = i === 0 ? 3690 : 120 + i * 3;
+                        }), i));
+                        record.settings.push(await page.evaluate(i => {
+                            const area = i % 2 === 0, second = Math.floor(i / 2) % 2;
+                            return measureDensityOperation(area ? 'area' : 'scale', () => {
+                                const s = document.querySelector('select[aria-label="' + (area ? '区域' : '字号') + '"]');
+                                s.value = area ? (second ? '75' : '50') : (second ? '100' : '110');
+                                s.dispatchEvent(new Event('change'));
+                            });
+                        }, i));
                     }
-                    record.settingsP95 = p95(record.settings);
-                    record.seekP95 = p95(record.seek);
-                    assert(
-                        record.settingsP95 <= 200 && record.seekP95 <= 200,
-                        "response latency",
-                    );
+                    record.settingsP95 = p95(record.settings.map(s => s.elapsed));
+                    record.seekP95 = p95(record.seek.map(s => s.elapsed));
+                    assertLatency(record.settings, 200); assertLatency(record.seek, 200);
+                    if (preflight && maximum) {
+                        record.shortFrames = [];
+                        for (const enabled of [false, true]) {
+                            await control(page, '显示弹幕', String(enabled));
+                            await page.evaluate(() => measureDensityOperation('seek', () => { document.querySelector('video').currentTime = 145; }));
+                            const before = await page.evaluate(async () => {
+                                const v = document.querySelector('video'), q = v.getVideoPlaybackQuality();
+                                DanmukuM1.metrics.peakActive = 0;
+                                await v.play(); return { total: q.totalVideoFrames, dropped: q.droppedVideoFrames };
+                            });
+                            await sleep(20000);
+                            const after = await page.evaluate(() => {
+                                const v = document.querySelector('video'), q = v.getVideoPlaybackQuality(); v.pause();
+                                return { total: q.totalVideoFrames, dropped: q.droppedVideoFrames, peak: DanmukuM1.metrics.peakActive };
+                            });
+                            record.shortFrames.push({ enabled, before, after, ratio: (after.dropped - before.dropped) / (after.total - before.total) });
+                        }
+                        fs.writeFileSync(path.join(dir, 'short-performance-progress.json'), JSON.stringify(record, null, 2));
+                        assert.equal(record.shortFrames[1].after.peak, 600);
+                        assert(record.shortFrames[1].ratio - record.shortFrames[0].ratio <= .01, 'short maximum-load drop delta');
+                    }
                     await leave(page);
                     record.cleanup = preflight ? [] : await cleanupCycles();
                     await play(page);
@@ -1100,6 +1080,8 @@ function p95(values) {
                             });
                         const before = await page.evaluate(() => {
                             DanmukuM1.metrics.peakActive = 0;
+                            window.densityActiveSamples = [];
+                            window.densityActiveTimer = setInterval(() => densityActiveSamples.push({ time: document.querySelector('video').currentTime, active: DanmukuM1.metrics.active }), 1000);
                             const v = document.querySelector("video"),
                                 q = v.getVideoPlaybackQuality();
                             return {
@@ -1110,6 +1092,7 @@ function p95(values) {
                             };
                         });
                         const progress = [];
+                        record.activeSegment = { enabled, before, progress };
                         for (let minute = 0; minute < 10; minute++) {
                             await sleep(60000);
                             progress.push(
@@ -1129,6 +1112,7 @@ function p95(values) {
                                         (minute + 1) * 58,
                                 "playback stopped during measured segment",
                             );
+                            fs.writeFileSync(path.join(dir, 'performance-progress.json'), JSON.stringify(result, null, 2));
                             console.log(
                                 JSON.stringify({
                                     engine,
@@ -1148,6 +1132,9 @@ function p95(values) {
                                 dropped: q.droppedVideoFrames,
                                 rendered: DanmukuM1.metrics.rendered,
                                 peakActive: DanmukuM1.metrics.peakActive,
+                                activeSamples: densityActiveSamples,
+                                indexBytes: DanmukuM1.metrics.indexBytes,
+                                stoppedSampling: clearInterval(densityActiveTimer),
                             };
                         });
                         assert(
@@ -1163,6 +1150,16 @@ function p95(values) {
                                 after.rendered - before.rendered > 500,
                                 "insufficient rendered comments",
                             );
+                        if (maximum && enabled) {
+                            assert.equal(after.peakActive, 600, 'maximum fixture did not reach 600');
+                            let start = null, sustained = 0;
+                            for (const sample of after.activeSamples) {
+                                if (sample.active >= 570) { if (start === null) start = sample.time; sustained = Math.max(sustained, sample.time - start); }
+                                else start = null;
+                            }
+                            assert(sustained >= 30, 'maximum fixture did not sustain >=570 for 30 seconds');
+                            record.sustainedHighLoadSeconds = sustained;
+                        }
                         record.frames.push({
                             enabled,
                             before,
@@ -1180,12 +1177,15 @@ function p95(values) {
                             "drop delta",
                         );
                     await leave(page);
+                    delete record.activeSegment;
                     result.performance.push(record);
+                    delete result.inProgress;
                     fs.writeFileSync(
                         path.join(dir, "performance-progress.json"),
                         JSON.stringify(result, null, 2),
                     );
                 }
+        }
         }
         result.consoleMessages = consoleMessages;
         result.nativeNavigationCancellations = errors.filter(
@@ -1240,6 +1240,8 @@ function p95(values) {
                     network,
                     diagnostics: await page.evaluate(() => ({
                         metrics: window.DanmukuM1 && DanmukuM1.metrics,
+                        operation: window.DanmukuM1 && DanmukuM1.operation,
+                        operationEvents: window.densityEvents?.slice(-12),
                         api: typeof window.ApiClient,
                         events: typeof window.Events,
                         user:
@@ -1258,6 +1260,8 @@ function p95(values) {
                             )
                             .filter((p) => p.includes("Danmuku")),
                     })),
+                    performance: result.performance,
+                    inProgress: result.inProgress,
                     message: redact(e.stack),
                 },
                 null,

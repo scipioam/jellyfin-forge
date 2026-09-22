@@ -1,6 +1,48 @@
 /* Jellyfin 12.1 adapter and bounded Canvas renderer. No normal-comment management list. */
 (function () {
     "use strict";
+    // Kept identical in both entry points: old cached bootstrap can load this player alone.
+    function ensureLayout(base) {
+        var version = 'm1-v5', contract = 'm1-density-v1';
+        var registry = window.__danmukuDependencies || (window.__danmukuDependencies = Object.create(null));
+        var key = base + '|' + version + '|' + contract;
+        function valid() { return window.DanmukuLayout && window.DanmukuLayout.resourceVersion === version && window.DanmukuLayout.renderVersion === contract; }
+        if (registry[key]) return registry[key];
+        if (valid()) return Promise.resolve(window.DanmukuLayout);
+        registry[key] = new Promise(function (resolve, reject) {
+            var script = document.createElement('script'), done = false;
+            var timer = setTimeout(function () { finish(Error('Layout timeout')); }, 10000);
+            function finish(error) {
+                if (done) return;
+                done = true; clearTimeout(timer); script.onload = script.onerror = null;
+                if (error) { script.remove(); delete registry[key]; reject(error); }
+                else resolve(window.DanmukuLayout);
+            }
+            script.src = base + '/Danmuku/Web/Danmuku-layout.js?v=' + version;
+            script.dataset.danmukuResource = 'layout';
+            script.onload = function () { finish(valid() ? null : Error('Layout version mismatch')); };
+            script.onerror = function () { finish(Error('Layout unavailable')); };
+            document.head.appendChild(script);
+        });
+        return registry[key];
+    }
+    function layoutFailure() {
+        if (window.__danmukuLoadFailure) return;
+        window.__danmukuLoadFailure = true;
+        var prompt = document.createElement('div');
+        prompt.setAttribute('role', 'status'); prompt.className = 'danmuku-message';
+        prompt.textContent = '弹幕组件加载失败，请刷新页面重试';
+        (document.body || document.documentElement).appendChild(prompt);
+        setTimeout(function () { prompt.remove(); }, 6000);
+    }
+
+    var source = document.currentScript && document.currentScript.src;
+    if (!source) return;
+    var resource = new URL(source, location.href);
+    if (resource.origin !== location.origin || !/\/Danmuku\/Web\/(?:Assets\/)?Danmuku\.js$/i.test(resource.pathname)) return;
+    var base = resource.origin + resource.pathname.slice(0, resource.pathname.toLowerCase().lastIndexOf('/danmuku/web/'));
+    ensureLayout(base).then(initialize).catch(layoutFailure);
+    function initialize() {
     if (window.DanmukuM1) return;
     var current = null,
         resolving = false,
@@ -20,7 +62,8 @@
         peakActive: 0,
         renderedModes: { 1: 0, 4: 0, 5: 0 },
     };
-    window.DanmukuM1 = { metrics: metrics };
+    var observedOperation = null;
+    window.DanmukuM1 = Object.freeze({ metrics: metrics, get operation() { return observedOperation; } });
     function api() {
         return window.ApiClient;
     }
@@ -130,6 +173,7 @@
                 }
                 if (current && current.media !== id) teardown();
                 if (!current) {
+                    if (video.readyState < 2 || video.seeking) return;
                     current = new Player(video, controls, id);
                     metrics.diagnostic = "";
                 }
@@ -150,13 +194,10 @@
             raf = 0,
             timer = 0,
             items = [],
-            active = [],
-            cursor = 0,
-            last = -1,
             width = 0,
             height = 0,
             ratio = 1;
-        var display = { low: 15, medium: 30, high: 50 },
+        var display = { low: 100, medium: 200, high: 400, overlap: 600 },
             pending = false,
             failedOnce = false,
             pip = false,
@@ -164,7 +205,7 @@
         var key = "danmuku:m1:" + api().getUrl("Danmuku") + ":" + user();
         var prefs = {
             enabled: true,
-            density: "medium",
+            densityModeV2: "high",
             area: 75,
             opacity: 75,
             scale: 100,
@@ -172,8 +213,9 @@
         try {
             Object.assign(prefs, JSON.parse(localStorage.getItem(key) || "{}"));
         } catch (_) {}
-        if (!["low", "medium", "high"].includes(prefs.density))
-            prefs.density = "medium";
+        delete prefs.density;
+        if (!["low", "medium", "high", "overlap"].includes(prefs.densityModeV2))
+            prefs.densityModeV2 = "high";
         if (![25, 50, 75, 100].includes(prefs.area)) prefs.area = 75;
         prefs.opacity = Math.max(
             10,
@@ -255,11 +297,11 @@
             subscriptions.push([target, name, fn]);
             metrics.listeners++;
         }
-        function save() {
+        function save(property) {
             try {
                 localStorage.setItem(key, JSON.stringify(prefs));
             } catch (_) {}
-            rebuild();
+            rebuild(property || "enabled");
         }
         function select(label, property, choices) {
             var row = document.createElement("label");
@@ -277,8 +319,8 @@
             panel.appendChild(row);
             listen(input, "change", function () {
                 prefs[property] =
-                    property === "density" ? input.value : +input.value;
-                save();
+                    property === "densityModeV2" ? input.value : +input.value;
+                save(property);
             });
         }
         var enabledRow = document.createElement("label");
@@ -312,10 +354,11 @@
             prefs.enabled = enabledInput.checked;
             save();
         });
-        select("密度", "density", [
+        select("密度", "densityModeV2", [
             ["low", "低"],
             ["medium", "中"],
             ["high", "高"],
+            ["overlap", "重叠"],
         ]);
         select(
             "区域",
@@ -380,19 +423,27 @@
             pending = true;
             retry.disabled = true;
             abort = new AbortController();
+            begin("load");
             try {
                 var response = lower(
                     await request(
                         "Danmuku/Playback/" +
                             encodeURIComponent(media) +
                             "?playbackId=" +
-                            encodeURIComponent(self.id),
+                            encodeURIComponent(self.id) + "&renderVersion=m1-density-v1",
                         abort.signal,
                     ),
                 );
                 if (disposed || current !== self) return;
                 items = response.items || [];
-                display = response.display || display;
+                if (response.status !== 'Disabled') {
+                    var contract = response.display, limits = contract && contract.limits;
+                    var values = limits && ['low', 'medium', 'high', 'overlap'].map(function (name) { return limits[name]; });
+                    if (!contract || contract.renderVersion !== 'm1-density-v1' || !values ||
+                        values.some(function (value, i) { return !Number.isInteger(value) || value < 1 || value > 600 || (i > 0 && value < values[i - 1]); }))
+                        throw Error('RenderContractMismatch');
+                    display = limits;
+                }
                 loaded = true;
                 retry.hidden = true;
                 metrics.selected = items.length;
@@ -400,11 +451,13 @@
                     root.hidden = true;
                     items = [];
                 }
-                rebuild();
+                layout = null; layoutKey = ''; sizes = null; painted = new Uint8Array(items.length);
+                enqueue();
                 if (manual)
                     notify(items.length ? "弹幕加载成功" : "当前无弹幕");
             } catch (error) {
                 if (disposed || error.name === "AbortError") return;
+                publish("failed");
                 retry.hidden = false;
                 if (manual || !failedOnce)
                     notify(
@@ -438,160 +491,177 @@
                 box.top - outer.top + (box.height - height) / 2 + "px";
             canvas.style.width = width + "px";
             canvas.style.height = height + "px";
-            canvas.width = Math.ceil(width * ratio);
-            canvas.height = Math.ceil(height * ratio);
+            var pixelWidth = Math.ceil(width * ratio), pixelHeight = Math.ceil(height * ratio);
+            if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
+            if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
             ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
             placePanel();
         }
-        function startIndex(time) {
-            var lo = 0,
-                hi = items.length;
-            while (lo < hi) {
-                var mid = (lo + hi) >>> 1;
-                if (items[mid].timeMs < time * 1000) lo = mid + 1;
-                else hi = mid;
-            }
-            return lo;
+        var layout = null, layoutKey = '', measured = 0;
+        var sizes = null, painted = null, operation = null, serial = 0, taskGeneration = 0;
+        var channel = new MessageChannel(), queued = false;
+        channel.port1.onmessage = function () { queued = false; work(); };
+        function publish(phase, committedTime) {
+            // Terminal states are immutable: a late failed load must not turn a
+            // newer, already committed disable operation into a failed one.
+            if (!operation || operation.phase !== 'computing') return;
+            operation = Object.freeze(Object.assign({}, operation, {
+                phase: phase, committedTimeMs: committedTime == null ? null : committedTime,
+                committedAt: phase === 'committed' ? performance.now() : null
+            }));
+            observedOperation = operation;
+            window.dispatchEvent(new CustomEvent('danmuku-operation', { detail: operation }));
+            if (phase === 'committed') metrics.lastRebuildMs = operation.committedAt - operation.startedAt;
         }
-        function xAt(item, now) {
-            return item.mode === 1
-                ? width - ((now - item.start) / 8) * (width + item.width)
-                : (width - item.width) / 2;
+        function cancel() {
+            taskGeneration++;
+            if (operation && operation.phase === 'computing') publish('cancelled');
         }
-        function admit(item, now) {
-            var start = item.timeMs / 1000,
-                duration = item.mode === 1 ? 8 : 4;
-            if (
-                now >= start + duration ||
-                active.length >= display[prefs.density]
-            )
-                return;
-            var size = (item.fontSize * prefs.scale) / 100,
-                line = Math.ceil(size * 1.25),
-                area = (height * prefs.area) / 100;
-            if (line > area || size < 1) return;
-            ctx.font = size + "px sans-serif";
-            var textWidth = ctx.measureText(item.text).width;
-            var candidate = {
-                mode: item.mode,
-                start: start,
-                end: start + duration,
-                width: textWidth,
-                size: size,
-                text: item.text,
-                color: item.color,
-                line: line,
-                y: 0,
-            };
-            for (
-                var offset = 0;
-                offset + line <= area;
-                offset += Math.max(8, line)
-            ) {
-                candidate.y = item.mode === 4 ? area - offset - line : offset;
-                var collision = active.some(function (other) {
-                    if (
-                        other.y + other.line <= candidate.y ||
-                        candidate.y + line <= other.y
-                    )
-                        return false;
-                    if (other.mode !== 1 || candidate.mode !== 1) return true;
-                    var t = Math.min(other.end, candidate.end);
-                    return (
-                        xAt(candidate, now) <
-                            xAt(other, now) + other.width + 12 ||
-                        xAt(candidate, t) < xAt(other, t) + other.width + 12
-                    );
-                });
-                if (!collision) {
-                    active.push(candidate);
-                    metrics.rendered++;
-                    metrics.renderedModes[item.mode]++;
-                    return;
-                }
+        function begin(reason) {
+            cancel();
+            operation = Object.freeze({ playbackId: self.id, operationId: ++serial,
+                generation: taskGeneration, layoutKey: layoutKey, reason: reason,
+                targetTimeMs: video.currentTime * 1000, committedTimeMs: null,
+                phase: 'computing', startedAt: performance.now(), committedAt: null });
+            observedOperation = operation;
+            window.dispatchEvent(new CustomEvent('danmuku-operation', { detail: operation }));
+            return operation;
+        }
+        function makeLayout() {
+            var nextKey = [self.id, width, height, prefs.area, prefs.scale, prefs.densityModeV2, JSON.stringify(display)].join('|');
+            if (nextKey === layoutKey && layout) return;
+            layoutKey = nextKey;
+            layout = window.DanmukuLayout.create(items, { width: width, height: height, area: prefs.area,
+                mode: prefs.densityModeV2, limit: display[prefs.densityModeV2] });
+            if (!sizes || sizes.length !== items.length * 4) {
+                sizes = new Float64Array(items.length * 4); measured = 0;
             }
+            metrics.indexBytes = layout.bytes + sizes.byteLength + painted.byteLength;
+            if (metrics.indexBytes > 2 * 1024 * 1024) throw Error('Measurement buffer budget exceeded');
+        }
+        function measure(i) {
+            var offset = i * 4;
+            if (i >= measured) {
+                var size = items[i].fontSize;
+                ctx.font = size + 'px sans-serif'; ctx.textBaseline = 'alphabetic';
+                var m = ctx.measureText(items[i].text);
+                var left = Number.isFinite(m.actualBoundingBoxLeft) ? m.actualBoundingBoxLeft : 0;
+                var right = Number.isFinite(m.actualBoundingBoxRight) ? m.actualBoundingBoxRight : m.width;
+                var ascent = Number.isFinite(m.actualBoundingBoxAscent) ? m.actualBoundingBoxAscent : Number.isFinite(m.fontBoundingBoxAscent) ? m.fontBoundingBoxAscent : size;
+                var descent = Number.isFinite(m.actualBoundingBoxDescent) ? m.actualBoundingBoxDescent : Number.isFinite(m.fontBoundingBoxDescent) ? m.fontBoundingBoxDescent : size * .25;
+                // Two CSS pixel stroke expands each side by one pixel. Advance and ink
+                // extents both participate, including left bearings and emoji fallback.
+                sizes[offset] = Math.max(m.width, right) + Math.max(0, left);
+                sizes[offset + 1] = ascent + descent;
+                sizes[offset + 2] = Math.max(0, left);
+                sizes[offset + 3] = ascent;
+                measured = i + 1;
+            }
+            var factor = prefs.scale / 100;
+            layout.measure(i, sizes[offset] * factor + 2,
+                Math.max(Math.ceil(items[i].fontSize * factor * 1.25), sizes[offset + 1] * factor + 2));
         }
         function draw(now) {
+            ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
             ctx.clearRect(0, 0, width, height);
-            if (!prefs.enabled || pip || !loaded) {
-                metrics.active = 0;
-                return;
-            }
-            active = active.filter(function (item) {
-                return item.end > now;
-            });
-            while (cursor < items.length && items[cursor].timeMs <= now * 1000)
-                admit(items[cursor++], now);
+            metrics.active = 0;
+            if (!prefs.enabled || pip || !loaded || !layout) return;
+            var snapshot = layout.snapshot(now);
             ctx.globalAlpha = prefs.opacity / 100;
-            ctx.textBaseline = "top";
-            ctx.lineWidth = 2;
-            active.forEach(function (item) {
-                ctx.font = item.size + "px sans-serif";
-                ctx.strokeStyle = "#000";
-                ctx.fillStyle = "#" + item.color.toString(16).padStart(6, "0");
-                var x = xAt(item, now);
-                ctx.strokeText(item.text, x, item.y);
-                ctx.fillText(item.text, x, item.y);
+            var factor = prefs.scale / 100;
+            ctx.setTransform(ratio * factor, 0, 0, ratio * factor, 0, 0);
+            ctx.textBaseline = 'alphabetic'; ctx.lineWidth = 2 / factor;
+            snapshot.indices.forEach(function (i) {
+                var item = items[i];
+                ctx.font = item.fontSize + 'px sans-serif';
+                ctx.strokeStyle = '#000'; ctx.fillStyle = '#' + item.color.toString(16).padStart(6, '0');
+                var x = layout.x(i, now) / factor + sizes[i * 4 + 2] + 1 / factor, y = layout.ys[i] / factor + sizes[i * 4 + 3] + 1 / factor;
+                ctx.strokeText(item.text, x, y); ctx.fillText(item.text, x, y);
+                if (!painted[i]) {
+                    painted[i] = 1;
+                    metrics.rendered++;
+                    metrics.renderedModes[item.mode]++;
+                }
             });
-            metrics.active = active.length;
-            metrics.peakActive = Math.max(metrics.peakActive, active.length);
-            last = now;
+            metrics.active = snapshot.indices.length;
+            metrics.areaUsed = snapshot.area; metrics.areaBudget = snapshot.budget;
+            metrics.renderLimit = snapshot.cap; metrics.dropped = Object.assign({}, layout.dropped);
+            metrics.peakActive = Math.max(metrics.peakActive, metrics.active);
+        }
+        function enqueue() {
+            if (!queued && !disposed) { queued = true; channel.port2.postMessage(0); }
+        }
+        function work() {
+            if (disposed || video.seeking || !loaded) return;
+            try {
+                var now = video.currentTime * 1000;
+                makeLayout();
+                // Measure the frozen collection once during load (within its 2s
+                // budget), in bounded batches. Rendering scales that same font
+                // coordinate system, so future seeks and size changes reuse exact
+                // ink metrics without an unbounded text/bitmap cache.
+                var measureStart = performance.now(), batch = 0;
+                while (measured < items.length) {
+                    measure(measured);
+                    if (++batch >= 256 || performance.now() - measureStart >= 4) { enqueue(); return; }
+                }
+                if (operation && operation.phase === 'computing' && operation.layoutKey !== layoutKey) {
+                    operation = Object.freeze(Object.assign({}, operation, { layoutKey: layoutKey }));
+                    observedOperation = operation;
+                }
+                if (prefs.enabled && !pip) {
+                    if (!layout.advance(now, function () { return performance.now(); }, measure)) { enqueue(); return; }
+                    // The video clock may advance during a batch. Submit only a complete prefix.
+                    now = video.currentTime * 1000;
+                    if (!layout.advance(now, function () { return performance.now(); }, measure)) { enqueue(); return; }
+                }
+                draw(now);
+                if (operation && operation.phase === 'computing') publish('committed', now);
+                if (!video.paused && prefs.enabled && !pip) schedule();
+            } catch (error) {
+                publish('failed'); notify('弹幕布局失败，请退出并重新进入播放');
+                metrics.diagnostic = String(error);
+            }
         }
         function frame() {
-            raf = 0;
-            metrics.frames = 0;
-            if (disposed || pip) return;
-            var now = video.currentTime;
-            if (now < last || Math.abs(now - last) > 1) reset(now);
-            draw(now);
-            if (!video.paused && prefs.enabled) schedule();
+            raf = 0; metrics.frames = 0;
+            if (!disposed && !queued) work();
         }
         function schedule() {
-            if (!raf && !disposed && !pip) {
-                raf = requestAnimationFrame(frame);
-                metrics.frames = 1;
+            if (!raf && !disposed && !pip && prefs.enabled && !video.seeking) {
+                raf = requestAnimationFrame(frame); metrics.frames = 1;
             }
         }
-        function reset(now) {
-            active = [];
-            cursor = startIndex(Math.max(0, now - 8));
-            last = now;
-        }
-        function rebuild() {
-            var started = performance.now(),
-                now = video.currentTime;
-            reset(now);
-            draw(now);
-            schedule();
-            metrics.lastRebuildMs = performance.now() - started;
-        }
-        listen(video, "play", schedule);
-        listen(video, "pause", function () {
+        function rebuild(reason) {
+            if (disposed) return;
+            // Native controls/geometry can settle after the response arrives.
+            // They refine the initial load target, rather than completing or
+            // replacing its request-to-first-draw operation prematurely.
+            if (operation && operation.phase === 'computing' && operation.reason === 'load' &&
+                ['geometry', 'mount', 'rate'].includes(reason)) { enqueue(); return; }
+            begin(typeof reason === 'string' ? reason : 'settings');
             if (raf) cancelAnimationFrame(raf);
-            raf = 0;
-            metrics.frames = 0;
-            draw(video.currentTime);
-        });
-        listen(video, "seeked", rebuild);
-        listen(video, "ratechange", rebuild);
-        listen(video, "loadedmetadata", function () {
-            geometry();
-            rebuild();
-        });
-        listen(video, "enterpictureinpicture", function () {
-            pip = true;
+            raf = 0; metrics.frames = 0;
+            if (!prefs.enabled || pip) {
+                draw(video.currentTime * 1000); publish('committed', video.currentTime * 1000);
+            } else enqueue();
+        }
+        listen(video, 'play', schedule);
+        listen(video, 'pause', function () {
             if (raf) cancelAnimationFrame(raf);
-            raf = 0;
-            metrics.frames = 0;
-            ctx.clearRect(0, 0, width, height);
+            raf = 0; metrics.frames = 0;
+            if (!video.seeking) enqueue();
         });
-        listen(video, "leavepictureinpicture", function () {
-            pip = false;
-            rebuild();
-        });
+        listen(video, 'seeking', cancel);
+        listen(video, 'seeked', function () { rebuild('seek'); });
+        listen(video, 'ratechange', function () { rebuild('rate'); });
+        listen(video, 'loadedmetadata', function () { geometry(); if (loaded) rebuild('geometry'); });
+        listen(video, 'enterpictureinpicture', function () { pip = true; rebuild('pip'); });
+        listen(video, 'leavepictureinpicture', function () { pip = false; rebuild('pip'); });
         var observer = new ResizeObserver(function () {
+            var previous = width + "|" + height;
             geometry();
-            rebuild();
+            if (loaded && previous !== width + "|" + height) rebuild("geometry");
         });
         observer.observe(video);
         metrics.observers++;
@@ -607,11 +677,18 @@
             host.append(canvas, message);
             placeControl(controls);
             self.controls = controls;
+            var previousGeometry = width + '|' + height + '|' + ratio;
             geometry();
-            rebuild();
+            if (previousGeometry !== width + '|' + height + '|' + ratio) rebuild('geometry');
+            // Reparenting unchanged controls must not cancel an in-flight seek
+            // or settings operation. The Canvas backing store is retained.
+            else if (operation && operation.phase === 'computing') enqueue();
         };
         this.dispose = function () {
+            cancel();
             disposed = true;
+            channel.port1.close(); channel.port2.close();
+            layout = null; sizes = null; painted = null; metrics.indexBytes = 0;
             if (abort) abort.abort();
             if (raf) cancelAnimationFrame(raf);
             if (timer) {
@@ -628,7 +705,6 @@
             root.remove();
             message.remove();
             items = [];
-            active = [];
             metrics.canvases--;
             metrics.frames = metrics.active = metrics.selected = 0;
         };
@@ -649,4 +725,5 @@
         inspect();
     }
     start();
+    }
 })();

@@ -44,6 +44,7 @@ public sealed class PluginContractTests
         {
             WebResourceController.BootstrapResourceName,
             WebResourceController.ScriptResourceName,
+            WebResourceController.LayoutResourceName,
             WebResourceController.StylesheetResourceName
         };
 

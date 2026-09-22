@@ -13,6 +13,7 @@ public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
     public Plugin(IApplicationPaths applicationPaths, IXmlSerializer xmlSerializer)
         : base(applicationPaths, xmlSerializer)
     {
+        Configuration.Validate();
     }
 
     public override string Name => "Danmuku";
@@ -21,7 +22,7 @@ public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
 
     public override void UpdateConfiguration(BasePluginConfiguration configuration)
     {
-        ((PluginConfiguration)configuration).Validate();
+        ((PluginConfiguration)configuration).Validate(requireAllRenderLimits: true);
         base.UpdateConfiguration(configuration);
     }
 

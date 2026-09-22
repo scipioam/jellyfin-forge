@@ -14,9 +14,10 @@ public sealed class WebResourceController : ControllerBase
     /// Static version of the fixed web resources. Bump it whenever the embedded
     /// bootstrap/danmuku assets change so clients revalidate cached copies.
     /// </summary>
-    public const string ResourceVersion = "m1-v4";
+    public const string ResourceVersion = "m1-v5";
 
     public const string BootstrapResourceName = "Jellyfin.Plugin.Danmuku.Web.bootstrap.js";
+    public const string LayoutResourceName = "Jellyfin.Plugin.Danmuku.Web.danmuku-layout.js";
     public const string ScriptResourceName = "Jellyfin.Plugin.Danmuku.Web.danmuku.js";
     public const string StylesheetResourceName = "Jellyfin.Plugin.Danmuku.Web.danmuku.css";
 
@@ -51,6 +52,10 @@ public sealed class WebResourceController : ControllerBase
     [AllowAnonymous]
     public ActionResult GetScript() => GetEmbeddedResource(ScriptResourceName, JavaScriptContentType);
 
+    [HttpGet("Danmuku-layout.js")]
+    [AllowAnonymous]
+    public ActionResult GetLayout() => GetEmbeddedResource(LayoutResourceName, JavaScriptContentType);
+
     [HttpGet("Danmuku.css")]
     [AllowAnonymous]
     public ActionResult GetStylesheet() => GetEmbeddedResource(StylesheetResourceName, StylesheetContentType);
@@ -60,6 +65,7 @@ public sealed class WebResourceController : ControllerBase
     public ActionResult Asset(string assetName) => assetName switch
     {
         "bootstrap.js" => GetBootstrap(),
+        "danmuku-layout.js" => GetLayout(),
         "danmuku.js" => GetScript(),
         "danmuku.css" => GetStylesheet(),
         _ => NotFound()

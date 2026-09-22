@@ -17,41 +17,6 @@
 (function () {
     'use strict';
 
-    // Kept identical in both entry points: old cached bootstrap can load this player alone.
-    function ensureLayout(base) {
-        var version = 'm1-v5', contract = 'm1-density-v1';
-        var registry = window.__danmukuDependencies || (window.__danmukuDependencies = Object.create(null));
-        var key = base + '|' + version + '|' + contract;
-        function valid() { return window.DanmukuLayout && window.DanmukuLayout.resourceVersion === version && window.DanmukuLayout.renderVersion === contract; }
-        if (registry[key]) return registry[key];
-        if (valid()) return Promise.resolve(window.DanmukuLayout);
-        registry[key] = new Promise(function (resolve, reject) {
-            var script = document.createElement('script'), done = false;
-            var timer = setTimeout(function () { finish(Error('Layout timeout')); }, 10000);
-            function finish(error) {
-                if (done) return;
-                done = true; clearTimeout(timer); script.onload = script.onerror = null;
-                if (error) { script.remove(); delete registry[key]; reject(error); }
-                else resolve(window.DanmukuLayout);
-            }
-            script.src = base + '/Danmuku/Web/Danmuku-layout.js?v=' + version;
-            script.dataset.danmukuResource = 'layout';
-            script.onload = function () { finish(valid() ? null : Error('Layout version mismatch')); };
-            script.onerror = function () { finish(Error('Layout unavailable')); };
-            document.head.appendChild(script);
-        });
-        return registry[key];
-    }
-    function layoutFailure() {
-        if (window.__danmukuLoadFailure) return;
-        window.__danmukuLoadFailure = true;
-        var prompt = document.createElement('div');
-        prompt.setAttribute('role', 'status'); prompt.className = 'danmuku-message';
-        prompt.textContent = '弹幕组件加载失败，请刷新页面重试';
-        (document.body || document.documentElement).appendChild(prompt);
-        setTimeout(function () { prompt.remove(); }, 6000);
-    }
-
     var STATUS_TIMEOUT_MS = 4000;
     var SCRIPT_MARKER = '/Danmuku/Web/Bootstrap.js';
 
@@ -93,7 +58,6 @@
                 return null;
             }
 
-            if (url.origin !== location.origin) return null;
             return url.origin + path.slice(0, index);
         } catch (error) {
             return null;
@@ -178,15 +142,6 @@
 
         var version = versionQuery(status.resourceVersion);
         injectStylesheet(base + '/Danmuku/Web/Danmuku.css?v=' + encodeURIComponent(version));
-        // This bootstrap may itself remain cached during a later upgrade. An
-        // unknown resource version belongs to its own player/dependency gate;
-        // do not pin that newer player to this bootstrap's older layout contract.
-        if (version !== 'm1-v5') {
-            injectScript(base + '/Danmuku/Web/Danmuku.js?v=' + encodeURIComponent(version));
-            return;
-        }
-        ensureLayout(base).then(function () {
-            injectScript(base + '/Danmuku/Web/Danmuku.js?v=' + encodeURIComponent(version));
-        }).catch(layoutFailure);
+        injectScript(base + '/Danmuku/Web/Danmuku.js?v=' + encodeURIComponent(version));
     }).catch(quietCatch);
 })();
