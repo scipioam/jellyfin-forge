@@ -84,7 +84,7 @@
                 Authorization:
                     'MediaBrowser Client="Danmuku", Device="Web", DeviceId=' +
                     JSON.stringify(api().deviceId()) +
-                    ', Version="0.2.0", Token=' +
+                    ', Version="0.0.1", Token=' +
                     JSON.stringify(api().accessToken()),
             },
         })

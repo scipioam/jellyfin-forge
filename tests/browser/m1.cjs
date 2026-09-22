@@ -17,7 +17,7 @@ const credentials = JSON.parse(
     item = credentials.item;
 const plugin = "6f79690c-c1d0-4738-b241-09aaa2c570e7";
 const auth = (token) =>
-    'MediaBrowser Client="M1 Browser", Device="Test", DeviceId="forge-m1-browser-helper", Version="0.2.0", Token=' +
+    'MediaBrowser Client="M1 Browser", Device="Test", DeviceId="forge-m1-browser-helper", Version="0.0.1", Token=' +
     JSON.stringify(token);
 const { installObserver, assertLatency } = require("./density-observer.cjs");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

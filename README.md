@@ -33,7 +33,7 @@ Jellyfin Server 不属于本仓库，不维护 Server fork，当前也不维护 
 ./build/package.sh agentbridge
 ```
 
-发布文件：`artifacts/jellyfin-plugin-danmuku-0.2.0.zip`、`artifacts/jellyfin-plugin-agentbridge-0.1.0.zip`，各带 SHA-256 校验文件。ZIP 包含自身 DLL、`meta.json` 和 LICENSE；Danmuku 另含独立 SQLite 依赖、RID 分层原生资产及依赖清单。不打包 Jellyfin 或 .NET 运行时。
+发布文件：`artifacts/jellyfin-plugin-danmuku-0.0.1.zip`、`artifacts/jellyfin-plugin-agentbridge-0.1.0.zip`，各带 SHA-256 校验文件。ZIP 包含自身 DLL、`meta.json` 和 LICENSE；Danmuku 另含独立 SQLite 依赖、RID 分层原生资产及依赖清单。不打包 Jellyfin 或 .NET 运行时。
 
 版本分别定义在各插件 `.csproj` 的 `Version` 与 `AssemblyVersion`（例如 `0.1.0` / `0.1.0.0`），独立递增；GUID 发布后保持稳定。共享 MSBuild 文件只包含编译设置，不包含统一插件版本。
 

@@ -22,7 +22,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[2]
 PLUGIN = "6f79690c-c1d0-4738-b241-09aaa2c570e7"
 AUTH = (
-    'MediaBrowser Client="M1", Device="Test", DeviceId="forge-m1-http", Version="0.2.0"'
+    'MediaBrowser Client="M1", Device="Test", DeviceId="forge-m1-http", Version="0.0.1"'
 )
 
 
