@@ -146,6 +146,13 @@ async function login(page, who = credentials.admin) {
     );
     await page.waitForURL("**/#/home", { timeout: 30000 });
     await page.locator(".homePage").first().waitFor({ timeout: 30000 });
+    await page.waitForLoadState("networkidle");
+    await page.evaluate(
+        () =>
+            new Promise((resolve) =>
+                requestAnimationFrame(() => requestAnimationFrame(resolve)),
+            ),
+    );
 }
 async function play(page, overlay = true) {
     if (new URL(page.url()).hash.startsWith("#/home")) {
@@ -225,9 +232,26 @@ async function control(page, label, value) {
     await page
         .locator('.danmuku-controls button[aria-label="弹幕设置"]')
         .click({ force: true });
-    await page
-        .locator('.danmuku-panel select[aria-label="' + label + '"]')
-        .selectOption(String(value));
+    if (label === "显示弹幕") {
+        const toggle = page.getByRole("switch", { name: label });
+        const checked = String(value) === "true";
+        if ((await toggle.isChecked()) !== checked) {
+            if (checked) await toggle.setChecked(true);
+            else {
+                await toggle.focus();
+                assert(
+                    await toggle.evaluate((e) => e === document.activeElement),
+                    "switch must retain keyboard focus",
+                );
+                await toggle.press("Space");
+            }
+        }
+        assert.equal(await toggle.isChecked(), checked);
+    } else {
+        await page
+            .locator('.danmuku-panel select[aria-label="' + label + '"]')
+            .selectOption(String(value));
+    }
     await page
         .locator('.danmuku-controls button[aria-label="弹幕设置"]')
         .click({ force: true });
@@ -549,6 +573,18 @@ function p95(values) {
             );
         }
         await play(page);
+        assert.equal(
+            await page
+                .locator('.danmuku-panel select[aria-label="区域"]')
+                .inputValue(),
+            "50",
+            "new user defaults to the approved upper-half display area",
+        );
+        assert(
+            await page
+                .getByRole("switch", { name: "显示弹幕", includeHidden: true })
+                .isChecked(),
+        );
         await page
             .locator("video")
             .first()

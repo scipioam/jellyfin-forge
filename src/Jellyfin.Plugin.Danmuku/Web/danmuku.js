@@ -165,7 +165,7 @@
         var prefs = {
             enabled: true,
             density: "medium",
-            area: 100,
+            area: 50,
             opacity: 75,
             scale: 100,
         };
@@ -174,7 +174,7 @@
         } catch (_) {}
         if (!["low", "medium", "high"].includes(prefs.density))
             prefs.density = "medium";
-        if (![25, 50, 75, 100].includes(prefs.area)) prefs.area = 100;
+        if (![25, 50, 75, 100].includes(prefs.area)) prefs.area = 50;
         prefs.opacity = Math.max(
             10,
             Math.min(100, Math.round((+prefs.opacity || 75) / 5) * 5),
@@ -277,18 +277,41 @@
             panel.appendChild(row);
             listen(input, "change", function () {
                 prefs[property] =
-                    property === "density"
-                        ? input.value
-                        : property === "enabled"
-                          ? input.value === "true"
-                          : +input.value;
+                    property === "density" ? input.value : +input.value;
                 save();
             });
         }
-        select("显示弹幕", "enabled", [
-            ["true", "开启"],
-            ["false", "关闭"],
-        ]);
+        var enabledRow = document.createElement("label");
+        enabledRow.textContent = "显示弹幕";
+        var switchWrapper = document.createElement("span");
+        switchWrapper.className = "danmuku-switch";
+        var enabledInput = document.createElement("input");
+        enabledInput.type = "checkbox";
+        enabledInput.setAttribute("role", "switch");
+        enabledInput.setAttribute("aria-label", "显示弹幕");
+        enabledInput.checked = prefs.enabled;
+        var switchTrack = document.createElement("span");
+        switchTrack.className = "danmuku-switch-track";
+        switchTrack.setAttribute("aria-hidden", "true");
+        switchWrapper.append(enabledInput, switchTrack);
+        enabledRow.appendChild(switchWrapper);
+        panel.appendChild(enabledRow);
+        ["keydown", "keyup"].forEach(function (name) {
+            listen(enabledInput, name, function (event) {
+                if (event.key !== " ") return;
+                event.preventDefault();
+                event.stopPropagation();
+                if (name === "keydown" && !event.repeat) {
+                    enabledInput.checked = !enabledInput.checked;
+                    prefs.enabled = enabledInput.checked;
+                    save();
+                }
+            });
+        });
+        listen(enabledInput, "change", function () {
+            prefs.enabled = enabledInput.checked;
+            save();
+        });
         select("密度", "density", [
             ["low", "低"],
             ["medium", "中"],
