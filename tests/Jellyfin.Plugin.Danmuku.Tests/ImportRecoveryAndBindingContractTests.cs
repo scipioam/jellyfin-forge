@@ -88,7 +88,7 @@ public sealed class ImportRecoveryAndBindingContractTests
         }
         var migrated = storage.CreateMigrator().Migrate();
         Assert.Equal(2, migrated.FromVersion);
-        Assert.Equal(3, migrated.ToVersion);
+        Assert.Equal(SchemaMigrations.CurrentVersion, migrated.ToVersion);
         Assert.NotNull(migrated.BackupPath);
         using var connection = storage.Factory.CreateOpenConnection();
         Assert.Equal("task", ScalarString(connection, "SELECT TaskId FROM ImportSlots"));

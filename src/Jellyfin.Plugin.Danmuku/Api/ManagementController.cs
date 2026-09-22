@@ -49,7 +49,13 @@ public sealed class ManagementController(ManagementQueries queries, ImportServic
     [HttpGet("Files/{fileId}")]
     public object FileDetails(string fileId) => queries.File(fileId);
     [HttpGet("Files/{fileId}/Bindings")]
-    public object FileBindings(string fileId, int startIndex = 0, int limit = 50) => queries.Bindings(fileId, startIndex, limit);
+    public object FileBindings(string fileId, int startIndex = 0, int limit = 50)
+    {
+        var result = queries.Bindings(fileId, startIndex, limit);
+        foreach (var row in result.Items)
+            row["MediaName"] = Guid.TryParse((string?)row["MediaId"], out var id) ? library.GetItemById(id)?.Name : null;
+        return result;
+    }
     [HttpGet("Files/{fileId}/Original")]
     public IActionResult Original(string fileId)
     {
@@ -90,7 +96,7 @@ public sealed class ManagementController(ManagementQueries queries, ImportServic
     [HttpGet("BindingChecks/{taskId}")]
     public object Check(string taskId) => bindings.GetCheckJob(taskId);
     [HttpPost("ImportBatches")]
-    public Task<ImportBatchSnapshot> Create(ImportBatchRequest body, CancellationToken ct) => imports.CreateBatchAsync(body with { MediaId = MediaId(body.MediaId) }, ct);
+    public Task<ImportBatchSnapshot> Create(ImportBatchRequest body, CancellationToken ct) => imports.CreateBatchAsync(body with { MediaId = body.Operation == "import" ? body.MediaId : MediaId(body.MediaId ?? "") }, ct);
     [HttpPost("ImportBatches/{batchId}/Files/{slot}"), DisableRequestSizeLimit]
     public async Task<IActionResult> Upload(string batchId, int slot, CancellationToken ct)
     {

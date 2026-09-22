@@ -428,6 +428,8 @@ function p95(values) {
         );
         if (!performanceRun) {
             page.on("dialog", (dialog) => dialog.accept());
+            await require("./admin-checks.cjs").check({ page, api, item, dir, engine });
+            result.checks.push("independent import preserves bindings, in-section file picker, four semantic tables at desktop/narrow widths, More actions");
             await page.locator('[data-tab="media"]').click();
             await page.locator("#dm-search-media").click();
             await page
@@ -462,6 +464,7 @@ function p95(values) {
                 .locator("#dm-files-list .dm-row")
                 .filter({ hasText: "synthetic.json" })
                 .first();
+            await sourceRow.locator("summary").click();
             await sourceRow
                 .getByRole("button", { name: "详情", exact: true })
                 .click();
@@ -482,7 +485,7 @@ function p95(values) {
             const chooserPromise = page.waitForEvent("filechooser");
             await page
                 .locator("#dm-binding button")
-                .filter({ hasText: "上传导入" })
+                .filter({ hasText: "上传并绑定" })
                 .click();
             const chooser = await chooserPromise;
             await chooser.setFiles({
@@ -533,14 +536,17 @@ function p95(values) {
                 .filter({ hasText: "管理绑定" })
                 .first()
                 .click();
+            await page.locator("#dm-binding .dm-row").filter({ hasText: "ui-errors.json" }).locator("summary").click();
             await page
                 .locator("#dm-binding .dm-row")
                 .filter({ hasText: "ui-errors.json" })
                 .getByRole("button", { name: "解除绑定" })
                 .click();
+            await page.locator("#dm-binding .dm-row").filter({ hasText: "ui-errors.json" }).waitFor({state:"detached"});
             await page.locator('[data-tab="files"]').click();
             await page.locator("#dm-unbound").check();
             await page.locator("#dm-search-files").click();
+            await page.locator("#dm-files-list .dm-row").filter({ hasText: "ui-errors.json" }).locator("summary").click();
             await page
                 .locator("#dm-files-list .dm-row")
                 .filter({ hasText: "ui-errors.json" })

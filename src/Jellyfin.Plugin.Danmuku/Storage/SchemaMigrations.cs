@@ -9,7 +9,7 @@ public static class SchemaMigrations
     /// <summary>
     /// Gets the schema version this plugin build expects.
     /// </summary>
-    public const int CurrentVersion = 3;
+    public const int CurrentVersion = 4;
 
     /// <summary>
     /// Gets the default migration list used in production.
@@ -18,8 +18,34 @@ public static class SchemaMigrations
     [
         new SchemaMigration(1, "Initial Danmuku schema", InitialSchemaSql),
         new SchemaMigration(2, "Add publish intent fields to ImportTasks", PublishIntentSql),
-        new SchemaMigration(3, "Import lifecycle and media checks", ImportLifecycleSql, RebuildsReferencedTables: true)
+        new SchemaMigration(3, "Import lifecycle and media checks", ImportLifecycleSql, RebuildsReferencedTables: true),
+        new SchemaMigration(4, "Allow file-only import batches", IndependentImportSql, RebuildsReferencedTables: true)
     ];
+
+    private const string IndependentImportSql = """
+        CREATE TABLE ImportBatches_new (
+            BatchId TEXT NOT NULL PRIMARY KEY,
+            MediaId TEXT NULL,
+            Operation TEXT NOT NULL DEFAULT 'append' CHECK (Operation IN ('import','append','replace')),
+            ReplaceFileId TEXT NULL,
+            ExpectedMediaVersion INTEGER NULL,
+            Status TEXT NOT NULL DEFAULT 'Open' CHECK (Status IN ('Open','Finished')),
+            CreatedAtUtcMs INTEGER NOT NULL,
+            FinishedAtUtcMs INTEGER NULL,
+            CHECK (
+                (Operation = 'import' AND MediaId IS NULL AND ExpectedMediaVersion IS NULL AND ReplaceFileId IS NULL)
+                OR (Operation IN ('append','replace') AND MediaId IS NOT NULL AND length(trim(MediaId)) > 0
+                    AND ExpectedMediaVersion IS NOT NULL AND ExpectedMediaVersion >= 0
+                    AND ((Operation = 'replace' AND ReplaceFileId IS NOT NULL)
+                        OR (Operation = 'append' AND ReplaceFileId IS NULL)))
+            )
+        );
+        INSERT INTO ImportBatches_new SELECT * FROM ImportBatches;
+        DROP TABLE ImportBatches;
+        ALTER TABLE ImportBatches_new RENAME TO ImportBatches;
+        CREATE INDEX IX_ImportBatches_MediaId ON ImportBatches (MediaId);
+        CREATE INDEX IX_ImportBatches_FinishedAt ON ImportBatches (FinishedAtUtcMs);
+        """;
 
     private const string ImportLifecycleSql = """
         CREATE TABLE ImportBatches_new (

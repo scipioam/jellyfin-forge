@@ -72,7 +72,7 @@ public sealed class ManagementQueries(ISqliteConnectionFactory factory, IPublish
     public Page<Dictionary<string, object?>> AbnormalMedia(int start, int limit) => Query("MediaState", "MediaId,ActiveFileId,IsDeactivated,Version,CheckStatus,CheckedAtUtcMs",
         "CheckStatus IN ('Missing','CheckFailed') AND EXISTS(SELECT 1 FROM MediaBindings b WHERE b.MediaId=MediaState.MediaId)", "MediaId", start, limit);
 
-    private const string TaskProjection = "TaskId,BatchId,Slot,Status,Stage,StagePercent,TotalComments,ProcessedComments,NormalComments,AbnormalComments,ImportedComments,SkippedComments,CreatedAtUtcMs,FinishedAtUtcMs,DeadlineAtUtcMs,ErrorCode,ResultCode,FileId";
+    private const string TaskProjection = "TaskId,BatchId,Slot,Status,Stage,StagePercent,TotalComments,ProcessedComments,NormalComments,AbnormalComments,ImportedComments,SkippedComments,CreatedAtUtcMs,FinishedAtUtcMs,DeadlineAtUtcMs,ErrorCode,ResultCode,FileId,(SELECT Operation FROM ImportBatches b WHERE b.BatchId=ImportTasks.BatchId) AS Operation,(SELECT MediaId FROM ImportBatches b WHERE b.BatchId=ImportTasks.BatchId) AS MediaId,(SELECT OriginalFileName FROM ImportSlots s WHERE s.BatchId=ImportTasks.BatchId AND s.Slot=ImportTasks.Slot) AS OriginalFileName";
 
     private Page<Dictionary<string, object?>> Query(string table, string projection, string where, string order, int start, int limit, params (string, object?)[] args)
     {

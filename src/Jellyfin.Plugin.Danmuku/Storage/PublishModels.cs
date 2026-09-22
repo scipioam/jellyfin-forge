@@ -5,7 +5,7 @@ namespace Jellyfin.Plugin.Danmuku.Storage;
 /// </summary>
 public sealed record PublishIntentRequest(
     string TaskId,
-    string MediaId,
+    string? MediaId,
     string FileId,
     string OriginalFileName,
     string StoredFileName,
@@ -22,7 +22,7 @@ public sealed record PublishIntentRequest(
 /// </summary>
 public sealed record PublishIntentSnapshot(
     string TaskId,
-    string MediaId,
+    string? MediaId,
     string Operation,
     string FileId,
     string StoredFileName,
@@ -61,7 +61,7 @@ public enum PublishOutcomeKind
 public sealed record PublishOutcome(
     PublishOutcomeKind Kind,
     string TaskId,
-    string MediaId,
+    string? MediaId,
     string FileId,
     bool BindingCreated,
     bool ActiveFileChanged,

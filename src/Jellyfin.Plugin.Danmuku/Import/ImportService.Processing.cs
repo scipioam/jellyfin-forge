@@ -146,7 +146,7 @@ public sealed partial class ImportService
             var slot = batch.Slots.Single(s => s.TaskId == task);
             try
             {
-                await bindings.RequireExistingAsync(batch.MediaId, ct).ConfigureAwait(false);
+                if (batch.Operation != "import") await bindings.RequireExistingAsync(batch.MediaId!, ct).ConfigureAwait(false);
                 var intent = await PrepareIntentAsync(task, ct).ConfigureAwait(false);
                 if (intent is null) continue;
                 await publish.RegisterIntentAsync(intent, ct).ConfigureAwait(false);
@@ -187,13 +187,14 @@ public sealed partial class ImportService
             FROM ImportTasks t JOIN ImportBatches b ON b.BatchId=t.BatchId JOIN ImportSlots s ON s.BatchId=t.BatchId AND s.Slot=t.Slot
             WHERE t.TaskId=$id AND t.Status='Queued' AND t.Stage='Ready'
             """, ("$id", taskId));
-        string media, original, format, hash, staged, asset;
+        string original, format, hash, staged, asset;
+        string? media;
         string? target, stored, targetOriginal, display;
         long? last;
         using (var r = cmd.ExecuteReader())
         {
             if (!r.Read()) return Task.FromResult<PublishIntentRequest?>(null);
-            media = r.GetString(0); original = r.GetString(1); format = r.GetString(2); hash = r.GetString(3); last = NullableLong(r, 4);
+            media = NullableText(r, 0); original = r.GetString(1); format = r.GetString(2); hash = r.GetString(3); last = NullableLong(r, 4);
             staged = r.GetString(5); asset = r.GetString(6); target = NullableText(r, 7); stored = NullableText(r, 8);
             targetOriginal = NullableText(r, 9); display = NullableText(r, 10);
         }

@@ -18,9 +18,12 @@ public sealed partial class ImportService(ISqliteConnectionFactory factory, ISql
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(request.FileNames);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.BatchId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(request.MediaId);
+        var independent = request.Operation == "import";
+        if (independent ? request.MediaId is not null || request.ExpectedVersion is not null || request.ReplaceFileId is not null
+            : string.IsNullOrWhiteSpace(request.MediaId) || request.ExpectedVersion is null or < 0)
+            throw new ImportOperationException("InvalidBatch", 422, "File-only import must not specify media or version; binding operations require both.");
         if (request.FileNames.Count is < 1 or > ImportLifecycleLimits.BatchFiles || request.FileNames.Any(string.IsNullOrWhiteSpace)
-            || request.Operation is not ("append" or "replace") || (request.Operation == "replace" && (request.FileNames.Count != 1 || request.ReplaceFileId is null))
+            || request.Operation is not ("import" or "append" or "replace") || (request.Operation == "replace" && (request.FileNames.Count != 1 || request.ReplaceFileId is null))
             || (request.Operation == "append" && request.ReplaceFileId is not null))
             throw new ImportOperationException("InvalidBatch", 422, "Choose 1–10 files; replacement requires one file and a bound target.");
         await SweepAsync(ct).ConfigureAwait(false);
@@ -28,14 +31,14 @@ public sealed partial class ImportService(ISqliteConnectionFactory factory, ISql
         // still return the original batch after it has changed the media version itself.
         var prior = FindBatch(request.BatchId);
         if (prior is not null) { RequireSameRequest(prior, request); return prior; }
-        await bindings.RequireExistingAsync(request.MediaId, ct).ConfigureAwait(false);
+        if (!independent) await bindings.RequireExistingAsync(request.MediaId!, ct).ConfigureAwait(false);
         await writes.EnqueueAsync((c, _) =>
         {
             using var t = c.BeginTransaction();
             var created = Now;
             if (Long(c, t, "SELECT COUNT(*) FROM ImportBatches WHERE BatchId=$id", ("$id", request.BatchId)) != 0)
                 return Task.CompletedTask;
-            MediaBindingService.RequireVersion(c, t, request.MediaId, request.ExpectedVersion);
+            if (!independent) MediaBindingService.RequireVersion(c, t, request.MediaId!, request.ExpectedVersion!.Value);
             if (request.Operation == "replace" && Long(c, t, "SELECT COUNT(*) FROM MediaBindings WHERE MediaId=$media AND FileId=$file",
                 ("$media", request.MediaId), ("$file", request.ReplaceFileId)) != 1)
                 throw new ImportOperationException("ReplaceTargetUnbound", 409, "The replacement target is no longer bound.");
@@ -78,16 +81,17 @@ public sealed partial class ImportService(ISqliteConnectionFactory factory, ISql
     {
         using var c = factory.CreateOpenConnection();
         using var t = c.BeginTransaction(deferred: true);
-        string media, operation, status;
+        string operation, status;
+        string? media;
         string? replace;
-        long version;
+        long? version;
         long? finished;
         using (var cmd = Command(c, t, "SELECT MediaId,Operation,ReplaceFileId,ExpectedMediaVersion,Status,FinishedAtUtcMs FROM ImportBatches WHERE BatchId=$id", ("$id", batchId)))
         using (var r = cmd.ExecuteReader())
         {
             if (!r.Read()) return null;
-            media = r.GetString(0); operation = r.GetString(1); replace = NullableText(r, 2);
-            version = r.GetInt64(3); status = r.GetString(4); finished = NullableLong(r, 5);
+            media = NullableText(r, 0); operation = r.GetString(1); replace = NullableText(r, 2);
+            version = NullableLong(r, 3); status = r.GetString(4); finished = NullableLong(r, 5);
         }
         var slots = new List<ImportSlotSnapshot>();
         using (var cmd = Command(c, t, """
@@ -148,12 +152,14 @@ public sealed partial class ImportService(ISqliteConnectionFactory factory, ISql
     {
         await SweepAsync(ct).ConfigureAwait(false);
         var batch = FindBatch(TaskBatch(taskId))!;
-        await bindings.RequireExistingAsync(batch.MediaId, ct).ConfigureAwait(false);
+        if (batch.Operation == "import")
+            throw new ImportOperationException("InvalidOperation", 422, "File-only imports do not have media conflicts to resume.");
+        await bindings.RequireExistingAsync(batch.MediaId!, ct).ConfigureAwait(false);
         await writes.EnqueueAsync((c, _) =>
         {
             using var t = c.BeginTransaction();
             if (Text(c, t, "SELECT Status FROM ImportTasks WHERE TaskId=$id", ("$id", taskId)) != "AwaitingConflictResolution") return Task.CompletedTask;
-            MediaBindingService.RequireVersion(c, t, batch.MediaId, expectedVersion);
+            MediaBindingService.RequireVersion(c, t, batch.MediaId!, expectedVersion);
             if (batch.Operation == "replace" && Long(c, t, "SELECT COUNT(*) FROM MediaBindings WHERE MediaId=$media AND FileId=$file",
                 ("$media", batch.MediaId), ("$file", batch.ReplaceFileId)) == 0)
                 throw new ImportOperationException("ReplaceTargetUnbound", 409, "Cancel this task and select a new replacement target.");

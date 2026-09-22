@@ -163,9 +163,12 @@ public sealed class PublishService : IPublishService
 
                 var current = RequirePlan(currentRecord);
 
-                var expected = ImportSql.Long(connection, transaction,
-                    "SELECT ExpectedMediaVersion FROM ImportBatches WHERE BatchId=$id", ("$id", current.BatchId));
-                MediaBindingService.RequireVersion(connection, transaction, current.MediaId, expected);
+                if (current.Operation != "import")
+                {
+                    var expected = ImportSql.Long(connection, transaction,
+                        "SELECT ExpectedMediaVersion FROM ImportBatches WHERE BatchId=$id", ("$id", current.BatchId));
+                    MediaBindingService.RequireVersion(connection, transaction, current.MediaId!, expected);
+                }
                 if (currentRecord.Status is "AwaitingConfirmation" or "AwaitingConflictResolution")
                     throw new ImportOperationException("ConfirmationRequired", 409, "The import needs confirmation.");
                 if (ImportSql.Long(connection, transaction,
@@ -221,12 +224,12 @@ public sealed class PublishService : IPublishService
                     current,
                     sameFileReplacementInsideTransaction);
 
-                ImportSql.Execute(connection, transaction,
+                if (current.Operation != "import") ImportSql.Execute(connection, transaction,
                     "UPDATE ImportBatches SET ExpectedMediaVersion=(SELECT Version FROM MediaState WHERE MediaId=$media) WHERE BatchId=$batch",
                     ("$media", current.MediaId), ("$batch", current.BatchId));
                 if (existingFile)
                     importedComments = (int)ImportSql.Long(connection, transaction, "SELECT CommentCount FROM Files WHERE FileId=$id", ("$id", current.FileId));
-                var resultCode = sameFileReplacement ? "Unchanged" : IsReplacement(current) ? "Replaced"
+                var resultCode = current.Operation == "import" ? (existingFile ? "Reused" : "Imported") : sameFileReplacement ? "Unchanged" : IsReplacement(current) ? "Replaced"
                     : !bindingCreated ? "AlreadyBound" : existingFile ? "Reused" : "Imported";
                 CompleteTask(connection, transaction, current, importedComments, resultCode);
                 CompleteSlotAndBatch(connection, transaction, current);
@@ -356,7 +359,7 @@ public sealed class PublishService : IPublishService
             GetNullableString(reader, 13),
             GetNullableInt64(reader, 14),
             GetNullableString(reader, 15),
-            reader.GetString(16),
+            GetNullableString(reader, 16),
             reader.GetString(17),
             GetNullableString(reader, 18));
     }
@@ -459,7 +462,7 @@ public sealed class PublishService : IPublishService
         PublishPlan plan,
         bool sameFileReplacement)
     {
-        if (sameFileReplacement)
+        if (plan.Operation == "import" || sameFileReplacement)
         {
             // B equals A: keep the binding, active selection and files untouched.
             return (false, false);
@@ -467,14 +470,14 @@ public sealed class PublishService : IPublishService
 
         var now = _clock.GetUtcNow().ToUnixTimeMilliseconds();
         var priorBindings = ImportSql.Long(connection, transaction, "SELECT COUNT(*) FROM MediaBindings WHERE MediaId=$id", ("$id", plan.MediaId));
-        var bindingCreated = InsertBinding(connection, transaction, plan.MediaId, plan.FileId, now);
+        var bindingCreated = InsertBinding(connection, transaction, plan.MediaId!, plan.FileId, now);
 
         if (!IsReplacement(plan))
         {
-            var state = LoadMediaState(connection, transaction, plan.MediaId);
+            var state = LoadMediaState(connection, transaction, plan.MediaId!);
             if (state is null)
             {
-                InsertMediaState(connection, transaction, plan.MediaId, plan.FileId, isDeactivated: 0, version: 1);
+                InsertMediaState(connection, transaction, plan.MediaId!, plan.FileId, isDeactivated: 0, version: 1);
                 return (bindingCreated, true);
             }
             var activate = priorBindings == 0 && state.IsDeactivated == 0 && state.ActiveFileId is null;
@@ -497,10 +500,10 @@ public sealed class PublishService : IPublishService
                 $"Replace target '{plan.ReplaceFileId}' is no longer bound to media '{plan.MediaId}'.");
         }
 
-        var replacedState = LoadMediaState(connection, transaction, plan.MediaId);
+        var replacedState = LoadMediaState(connection, transaction, plan.MediaId!);
         if (replacedState is null)
         {
-            InsertMediaState(connection, transaction, plan.MediaId, null, isDeactivated: 0, version: 1);
+            InsertMediaState(connection, transaction, plan.MediaId!, null, isDeactivated: 0, version: 1);
             return (bindingCreated, false);
         }
 
@@ -660,7 +663,7 @@ public sealed class PublishService : IPublishService
         string? StagedAssetPath,
         long? IntentCreatedAtUtcMs,
         string? FileId,
-        string MediaId,
+        string? MediaId,
         string Operation,
         string? ReplaceFileId);
 
@@ -669,7 +672,7 @@ public sealed class PublishService : IPublishService
         string BatchId,
         int Slot,
         string Status,
-        string MediaId,
+        string? MediaId,
         string Operation,
         string? ReplaceFileId,
         string FileId,

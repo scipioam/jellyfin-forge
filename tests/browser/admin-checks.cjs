@@ -1,0 +1,63 @@
+'use strict';
+const assert = require('assert/strict');
+const path = require('path');
+exports.check = async function ({page, api, item, dir, engine}) {
+    await require("./admin-races.cjs").check({page, item, api});
+    const before = await api('/Danmuku/Media/' + item + '/Bindings');
+    let releaseFiles, filesStarted;
+    const filesGate = new Promise(r=>releaseFiles=r), filesPending = new Promise(r=>filesStarted=r);
+    const filesPattern = /\/Danmuku\/Files\?/;
+    await page.route(filesPattern, async route => { filesStarted(); await filesGate; await route.continue(); });
+    await page.locator('[data-tab="files"]').click(); await filesPending;
+    assert.equal(await page.locator('#dm-files-list').getAttribute('aria-busy'),'true');
+    assert.equal(await page.locator('#dm-files-list .dm-row').count(),0,'old file rows remain interactive during reload');
+    releaseFiles();
+    await page.waitForFunction(()=>document.querySelector('#dm-files-list').getAttribute('aria-busy')==='false');
+    await page.unroute(filesPattern);
+    assert.equal(await page.getByRole('button', {name:'绑定到已选媒体'}).count(), 0);
+    const chooser = page.waitForEvent('filechooser');
+    await page.locator('#dm-import-files').click();
+    const name = 'standalone-' + engine + '.json';
+    await (await chooser).setFiles({name, mimeType:'application/json', buffer:Buffer.from(JSON.stringify([{progress:1000,content:'Independent UI ' + engine}]))});
+    await page.waitForFunction(name => Array.from(document.querySelectorAll('#dm-tasks-list .dm-row')).some(r=>r.textContent.includes(name) && r.textContent.includes('已提交')), name, {timeout:60000});
+    assert((await page.locator('#dm-tasks-list').textContent()).includes('仅导入文件'));
+    assert.deepEqual(await api('/Danmuku/Media/' + item + '/Bindings'), before);
+    const result = await api('/Danmuku/Files?search=' + encodeURIComponent(name));
+    const file = result.items.find(f=>f.storedFileName===name); assert(file); assert.equal(file.bindingCount,0);
+    await page.locator('[data-tab="media"]').click();
+    await page.locator('#dm-search-media').click();
+    await page.locator('#dm-media-list').getByRole('button',{name:'管理绑定'}).first().click();
+    await page.getByRole('button',{name:'添加已有文件',exact:true}).click();
+    await page.locator('#dm-picker-search').fill(name);
+    await page.getByRole('button',{name:'查找文件',exact:true}).click();
+    await page.locator('#dm-picker-list .dm-row').filter({hasText:name}).getByRole('button',{name:'绑定',exact:true}).click();
+    await page.locator('#dm-binding .dm-row').filter({hasText:name}).waitFor();
+    const after = await api('/Danmuku/Media/' + item + '/Bindings');
+    assert(after.fileIds.includes(file.fileId)); assert.equal(after.activeFileId,before.activeFileId);
+    for (const viewport of [{width:1440,height:900},{width:390,height:844}]) {
+        await page.setViewportSize(viewport);
+        for (const section of ['media','files','tasks','settings']) {
+            await page.locator('[data-tab="'+section+'"]').click();
+            const surface=page.locator('[data-section="'+section+'"]');
+            await surface.locator('table').first().waitFor();
+            assert.equal(await page.locator('[data-tab="'+section+'"]').getAttribute('aria-current'),'page');
+            assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'whole-page overflow '+section);
+            assert(await surface.locator('th[scope=col]').count()>0);
+            await page.screenshot({path:path.join(dir,engine+'-admin-'+section+'-'+viewport.width+'.png')});
+        }
+    }
+    await page.setViewportSize({width:1440,height:900});
+    await page.locator('[data-tab="media"]').click();
+    const row=page.locator('#dm-binding .dm-row').filter({hasText:name});
+    await row.locator('summary').click();
+    await row.getByRole('button',{name:'解除绑定'}).click();
+    await row.waitFor({state:'detached'});
+    await page.locator('[data-tab="files"]').click();
+    const fileRow=page.locator('#dm-files-list .dm-row').filter({hasText:name});
+    await fileRow.locator('summary').focus();
+    await page.keyboard.press('Enter');
+    assert(await fileRow.locator('details').evaluate(d=>d.open));
+    await fileRow.getByRole('button',{name:'删除文件本体'}).click();
+    await page.waitForFunction(name=>!document.querySelector('#dm-files-list').textContent.includes(name),name);
+    assert.equal((await api('/Danmuku/Media/'+item+'/Bindings')).activeFileId,before.activeFileId);
+};

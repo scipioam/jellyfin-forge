@@ -624,7 +624,30 @@ class Instance:
             "real HTTP partial upload failure and unread accepted response replay passed"
         )
 
+    def independent_import_tests(self):
+        route = "/Danmuku/ImportBatches"
+        binding_route = "/Danmuku/Media/" + self.item + "/Bindings"
+        before = self.request(binding_route, token=self.admin)
+        body = {"BatchId": uuid.uuid4().hex, "Operation": "import", "FileNames": ["independent.json"]}
+        self.request(route, body, expected=401)
+        self.request(route, body, self.viewer, expected=403)
+        for extra in [{"MediaId": self.item}, {"ExpectedVersion": 0}, {"ReplaceFileId": "file"}]:
+            self.request(route, body | extra, self.admin, expected=422)
+        batch = self.request(route, body, self.admin)
+        task = self.task(batch, 0, b'[{"progress":1000,"content":"independent HTTP"}]')
+        result = self.terminal(task["TaskId"])
+        check(result["Status"] == "Completed" and result["Operation"] == "import", "independent import completion")
+        check(result.get("MediaId") is None, "independent import media must be null")
+        check(self.request(binding_route, token=self.admin) == before, "independent import changed media")
+        replay = self.request(route, body, self.admin)
+        check(replay["Slots"][0]["FileId"] == result["FileId"], "independent retry lost file identity")
+        self.request(route, body | {"Operation":"append", "MediaId":self.item, "ExpectedVersion":before["Version"]}, self.admin, expected=409)
+        self.request("/Danmuku/Imports/" + task["TaskId"] + "/Resume", {"ExpectedVersion":0}, self.admin, expected=422)
+        self.request("/Danmuku/Files/" + result["FileId"], token=self.admin, method="DELETE", expected=200)
+        self.results.append("independent import permissions, invalid parameters, idempotency, no media mutation and unsupported resume")
+
     def http_tests(self):
+        self.independent_import_tests()
         for route in [
             "/Danmuku/Files",
             "/Danmuku/Files/missing/Original",

@@ -37,6 +37,8 @@
                     </section>
                     <section data-section="files" hidden>
                         <h3>弹幕文件</h3>
+                        <p class="dm-help">导入后保存在文件库；需要用于播放时，在“媒体绑定”中选择文件。</p>
+                        <button type="button" id="dm-import-files" class="dm-primary">导入文件</button>
                         <label
                             >文件名 <input id="dm-file-search" type="search"
                         /></label>
@@ -72,6 +74,7 @@
                     </section>
                     <section data-section="settings" hidden>
                         <h3>设置</h3>
+                        <p class="dm-help">整段加载与同屏显示分别限制，修改后对新播放生效。</p>
                         <form id="DanmukuConfigForm">
                             <fieldset id="dm-settings-fields" disabled>
                                 <label
@@ -104,10 +107,11 @@
                                 </button>
                             </fieldset>
                         </form>
+                        <details class="dm-integration-details"><summary>Web 接入说明</summary>
                         <p id="dm-integration"></p>
                         <p>
                             开关不部署入口。用仓库入口工具生成并挂载对应镜像入口，刷新页面后检查播放器；状态无法从插件内确认时不会显示“已部署”。
-                        </p>
+                        </p></details>
                     </section>
                 </div>
             </div>
@@ -153,6 +157,38 @@
                     background: #222;
                     color: white;
                 }
+
+                #DanmukuConfigPage .content-primary { max-width: 1280px; min-width: 0; }
+                #DanmukuConfigPage nav { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid #8885; padding-bottom: 8px; }
+                #DanmukuConfigPage nav button { background: transparent; color: inherit; border: 0; border-radius: 4px; }
+                #DanmukuConfigPage nav button[aria-current="page"] { color: #00a4dc; background: #00a4dc18; box-shadow: inset 0 -2px #00a4dc; }
+                #DanmukuConfigPage .dm-table-wrap { max-width: 100%; overflow-x: auto; margin: 16px 0; border: 1px solid #8885; border-radius: 6px; }
+                #DanmukuConfigPage table { width: 100%; border-collapse: collapse; text-align: left; font-size: .95em; }
+                #DanmukuConfigPage th { font-weight: 600; background: #8881; color: inherit; white-space: nowrap; }
+                #DanmukuConfigPage th, #DanmukuConfigPage td { padding: 12px 16px; vertical-align: top; border-bottom: 1px solid #8883; }
+                #DanmukuConfigPage tr:last-child td { border-bottom: 0; }
+                #DanmukuConfigPage td { min-width: 80px; overflow-wrap: anywhere; }
+                #DanmukuConfigPage td:first-child { min-width: 160px; max-width: 360px; }
+                #DanmukuConfigPage td:last-child { min-width: 125px; }
+                #DanmukuConfigPage td p { margin: 0 0 6px; line-height: 1.6; }
+                #DanmukuConfigPage .dm-help { opacity: .78; line-height: 1.7; }
+                #DanmukuConfigPage .dm-primary { background: #007ca8; color: #fff; border: 1px solid transparent; border-radius: 4px; }
+                #DanmukuConfigPage .dm-more { display: inline-block; vertical-align: top; margin: 4px; }
+                #DanmukuConfigPage summary { cursor: pointer; padding: 8px; }
+                #DanmukuConfigPage .dm-more[open] { display: block; }
+                #DanmukuConfigPage .dm-more button { display: block; }
+                #DanmukuConfigPage button:not(.button-submit):not(.dm-primary) { color: inherit; background: #8882; border: 1px solid #8885; border-radius: 4px; }
+                #DanmukuConfigPage button:disabled { cursor: default; opacity: .5; }
+                #DanmukuConfigPage :focus-visible { outline: 2px solid #00a4dc; outline-offset: 3px; }
+                #DanmukuConfigPage .dm-setting-input { width: 100px; box-sizing: border-box; }
+                #DanmukuConfigPage .dm-picker { margin: 16px 0; padding: 16px; border: 1px solid #00a4dc66; border-radius: 6px; }
+                #DanmukuConfigPage .dm-binding-title { margin-top: 28px; }
+                #DanmukuConfigPage .dm-status { display: inline-block; padding: 3px 8px; background: #8882; border-radius: 4px; }
+                @media (max-width: 600px) {
+                    #DanmukuConfigPage th, #DanmukuConfigPage td { padding: 10px; }
+                    #DanmukuConfigPage label { max-width: 100%; box-sizing: border-box; }
+                    #DanmukuConfigPage .dm-picker { padding: 10px; }
+                }
             </style>
             <script>
                 (function () {
@@ -161,6 +197,7 @@
                         pluginId = "6f79690c-c1d0-4738-b241-09aaa2c570e7",
                         selected = null,
                         state = null,
+                        selectedName = "", bindingGeneration = 0, pickerGeneration = 0, mediaGeneration = 0, fileGeneration = 0, taskGeneration = 0,
                         timer = null,
                         alive = false,
                         tab = "media",
@@ -238,34 +275,51 @@
                         b.type = "button";
                         b.textContent = text;
                         b.addEventListener("click", action(fn));
+                        if (parent.tagName === "TR") parent = parent.lastElementChild;
                         parent.appendChild(b);
                         return b;
                     }
                     function line(parent, text) {
                         var p = document.createElement("p");
                         p.textContent = text;
+                        if (parent.tagName === "TR") parent = parent.firstElementChild;
                         parent.appendChild(p);
                         return p;
                     }
-                    function row(parent) {
-                        var r = document.createElement("div");
-                        r.className = "dm-row";
-                        parent.appendChild(r);
-                        return r;
+                    function table(host, columns, label) {
+                        var wrap = document.createElement("div"); wrap.className = "dm-table-wrap";
+                        wrap.tabIndex = 0; wrap.setAttribute("role", "region"); wrap.setAttribute("aria-label", label || columns.join("、"));
+                        var t = document.createElement("table"), head = document.createElement("thead"), hr = document.createElement("tr");
+                        columns.forEach(function (name) { var th = document.createElement("th"); th.scope = "col"; th.textContent = name; hr.appendChild(th); });
+                        head.appendChild(hr); t.appendChild(head);
+                        var body = document.createElement("tbody"); body.dataset.columns = columns.length; t.appendChild(body); wrap.appendChild(t); host.appendChild(wrap); return body;
                     }
+                    function row(parent) {
+                        var r = document.createElement(parent.tagName === "TBODY" ? "tr" : "div"); r.className = "dm-row";
+                        if (r.tagName === "TR") for (var i = 0; i < Number(parent.dataset.columns); i++) r.appendChild(document.createElement("td"));
+                        parent.appendChild(r); return r;
+                    }
+                    function cell(r, index, value) { r.children[index].textContent = value == null ? "—" : String(value); return r.children[index]; }
+                    function more(parent) {
+                        if (parent.tagName === "TR") parent = parent.lastElementChild;
+                        var d = document.createElement("details"), summary = document.createElement("summary");
+                        d.className = "dm-more"; summary.textContent = "更多"; d.appendChild(summary); parent.appendChild(d); return d;
+                    }
+                    function operationName(value) { return { import: "仅导入文件", append: "追加并绑定", replace: "替换绑定" }[value] || value; }
                     function switchTab(next) {
                         tab = next;
+                        page.querySelectorAll("[data-tab]").forEach(function (b) { if (b.dataset.tab === next) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current"); });
                         page.querySelectorAll("[data-section]").forEach(
                             function (s) {
                                 s.hidden = s.dataset.section !== next;
                             },
                         );
                     }
-                    function paged(host, result, start, load, render) {
+                    function paged(host, result, start, load, render, columns) {
                         host.replaceChildren();
-                        result.items.forEach(function (item) {
-                            render(row(host), item);
-                        });
+                        var body = table(host, columns || ["信息", "操作"]);
+                        result.items.forEach(function (item) { render(row(body), item); });
+                        if (!result.items.length) { var empty = document.createElement("tr"), td = document.createElement("td"); td.colSpan = Number(body.dataset.columns); td.textContent = "暂无结果"; empty.appendChild(td); body.appendChild(empty); }
                         line(
                             host,
                             "共 " +
@@ -289,9 +343,13 @@
                             host,
                         ).disabled = start + 50 >= result.totalCount;
                     }
-                    var limitHelp = document.createElement("p");
-                    limitHelp.textContent = "低／中档按画面占用 40%／65% 控制，高档防重叠，重叠档仅滚动弹幕允许相互覆盖。以下为独立保护上限，不是目标显示条数；四档均为 1–600 且按顺序非递减，只影响新播放。";
-                    $("dm-number-settings").appendChild(limitHelp);
+                    var numberHost = $("dm-number-settings"), settingBodies = [];
+                    [["整段视频加载上限", "按视频时长选择，一次播放最多加载的总条数。1–20,000，按时长非递减。"],
+                     ["同屏保护上限", "同时存活的弹幕最多多少条，不是整段加载数量。1–600，四档非递减；实际显示还受占用预算与防碰撞约束。"]].forEach(function (group) {
+                        var h = document.createElement("h4"); h.textContent = group[0]; numberHost.appendChild(h);
+                        line(numberHost, group[1]).className = "dm-help";
+                        settingBodies.push(table(numberHost, ["适用条件 / 档位", "上限（条）", "说明"], group[0]));
+                    });
                     var fields = [
                         ["ShortLoadLimit", "短于 30 分钟加载上限", 20000],
                         [
@@ -305,18 +363,13 @@
                         ["HighRenderLimit", "高档渲染保护上限", 600],
                         ["OverlapRenderLimit", "重叠档渲染保护上限", 600],
                     ];
-                    fields.forEach(function (f) {
-                        var label = document.createElement("label");
-                        label.textContent = f[1] + " ";
-                        var input = document.createElement("input");
-                        input.type = "number";
-                        input.min = 1;
-                        input.max = f[2];
-                        input.step = 1;
-                        input.required = true;
-                        input.id = "dm-" + f[0];
-                        label.appendChild(input);
-                        $("dm-number-settings").appendChild(label);
+                    fields.forEach(function (f, i) {
+                        var r = row(settingBodies[i < 3 ? 0 : 1]), label = document.createElement("label");
+                        label.textContent = f[1]; label.htmlFor = "dm-" + f[0]; r.children[0].appendChild(label);
+                        var input = document.createElement("input"); input.type = "number"; input.min = 1; input.max = f[2]; input.step = 1; input.required = true;
+                        input.id = "dm-" + f[0]; input.className = "dm-setting-input"; input.setAttribute("aria-describedby", input.id + "-help"); r.children[1].appendChild(input);
+                        var notes = ["短视频；时长未知时也使用此项。", "包含恰好 30 分钟和 60 分钟。", "长视频；不按进度重复加载。", "占用预算 40%，防重叠。", "占用预算 65%，防重叠。", "默认档位；无面积预算，仍防重叠。", "滚动可互盖及覆盖固定；固定彼此防重叠。"];
+                        cell(r, 2, notes[i]).id = input.id + "-help";
                     });
                     $("dm-defaults").onclick = function () {
                         fields.forEach(function (f, i) {
@@ -324,7 +377,7 @@
                                 5000, 8000, 10000, 100, 200, 400, 600,
                             ][i];
                         });
-                        report("已恢复默认加载上限和密度，点击保存后生效。");
+                        report("已恢复默认加载上限和同屏保护上限，点击保存后生效。");
                     };
                     var settingsBusy = 0;
                     function busySettings(busy) {
@@ -419,6 +472,7 @@
                         }),
                     );
                     async function media(start, parent, abnormal) {
+                        var requestGeneration = ++mediaGeneration;
                         var route =
                             "Media?startIndex=" +
                             start +
@@ -428,6 +482,7 @@
                             route += "&parentId=" + encodeURIComponent(parent);
                         if (abnormal) route += "&abnormal=true";
                         var result = await req(route);
+                        if (!alive || requestGeneration !== mediaGeneration) return;
                         paged(
                             $("dm-media-list"),
                             result,
@@ -436,25 +491,21 @@
                                 return media(s, parent, abnormal);
                             },
                             function (r, item) {
-                                line(
-                                    r,
-                                    (item.name || item.mediaId) +
-                                        " · " +
-                                        (item.type || item.checkStatus),
-                                );
+                                cell(r, 0, item.name || item.mediaId);
+                                cell(r, 1, item.type || item.checkStatus);
                                 button(
                                     item.canBind || abnormal
                                         ? "管理绑定"
                                         : "进入",
                                     async function () {
                                         if (item.canBind || abnormal) {
-                                            selected = item.id || item.mediaId;
+                                            selected = item.id || item.mediaId; selectedName = item.name || selected;
                                             await bindings();
                                         } else await media(0, item.id, false);
                                     },
                                     r,
                                 );
-                            },
+                            }, ["媒体名称", "类型 / 状态", "操作"],
                         );
                         if (parent)
                             button(
@@ -465,115 +516,65 @@
                                 $("dm-media-list"),
                             );
                     }
-                    async function update(ids, active) {
-                        state = await req(
-                            "Media/" + selected + "/Bindings",
-                            "PUT",
-                            {
-                                expectedVersion: state.version,
-                                fileIds: ids,
-                                activeFileId: active,
-                            },
-                        );
-                        await bindings();
+                    async function update(ids, active, context) {
+                        context = context || state;
+                        if (!context || context.mediaId !== selected) throw new Error("媒体已切换，请重新选择操作");
+                        var mediaId = context.mediaId;
+                        try { await req("Media/" + mediaId + "/Bindings", "PUT", { expectedVersion: context.version, fileIds: ids, activeFileId: active }); }
+                        catch (error) { if (selected === mediaId) await bindings(); throw error; }
+                        if (selected === mediaId) await bindings();
                     }
                     async function bindings() {
-                        state = await req("Media/" + selected + "/Bindings");
-                        var host = $("dm-binding");
-                        host.replaceChildren();
-                        line(
-                            host,
-                            "媒体 " +
-                                selected +
-                                " · 版本 " +
-                                state.version +
-                                " · " +
-                                state.checkStatus,
-                        );
-                        line(
-                            host,
-                            "解除绑定保留文件本体；替换仅改变本媒体，其他媒体引用不变。",
-                        );
-                        for (var id of state.fileIds) {
-                            var file = await req(
-                                "Files/" + encodeURIComponent(id),
-                            );
-                            (function (id, file) {
-                                var r = row(host);
-                                line(
-                                    r,
-                                    file.storedFileName +
-                                        (id === state.activeFileId
-                                            ? " · 生效"
-                                            : ""),
-                                );
-                                button(
-                                    "设为生效",
-                                    function () {
-                                        return update(state.fileIds, id);
-                                    },
-                                    r,
-                                );
-                                button(
-                                    "解除绑定",
-                                    function () {
-                                        if (
-                                            confirm(
-                                                "解除本媒体绑定；文件本体和其他媒体不受影响。解除生效文件会停用本媒体弹幕。",
-                                            )
-                                        )
-                                            return update(
-                                                state.fileIds.filter(
-                                                    function (x) {
-                                                        return x !== id;
-                                                    },
-                                                ),
-                                                state.activeFileId === id
-                                                    ? null
-                                                    : state.activeFileId,
-                                            );
-                                    },
-                                    r,
-                                );
-                                button(
-                                    "替换",
-                                    function () {
-                                        if (
-                                            !confirm(
-                                                "选择一个新文件替换本媒体绑定；完整发布后才生效，旧文件和其他媒体保留。",
-                                            )
-                                        )
-                                            return;
-                                        chooseUpload(true, id);
-                                    },
-                                    r,
-                                );
-                            })(id, file);
-                        }
-                        button(
-                            "停用本媒体弹幕",
-                            function () {
-                                return update(state.fileIds, null);
-                            },
-                            host,
-                        );
-                        button(
-                            "绑定已有文件（前往文件列表）",
-                            async function () {
-                                switchTab("files");
-                                await fileList(0);
-                            },
-                            host,
-                        );
-                        button(
-                            "上传导入（最多 10 个）",
-                            function () {
-                                chooseUpload(false);
-                            },
-                            host,
-                        );
+                        var mediaId = selected, generation = ++bindingGeneration; ++pickerGeneration;
+                        var host = $("dm-binding"); host.replaceChildren(); state = null;
+                        var snapshot = await req("Media/" + mediaId + "/Bindings");
+                        var files = await Promise.all(snapshot.fileIds.map(function (id) { return req("Files/" + encodeURIComponent(id)); }));
+                        if (!alive || selected !== mediaId || generation !== bindingGeneration) return;
+                        state = snapshot;
+                        var title = document.createElement("h3"); title.className = "dm-binding-title"; title.textContent = selectedName || mediaId; host.appendChild(title);
+                        line(host, "解除绑定保留文件；替换仅影响本媒体。绑定已有文件后，可选择设为生效。").className = "dm-help";
+                        button("添加已有文件", function () { return picker(0, "", snapshot); }, host);
+                        button("上传并绑定（最多 10 个）", function () { chooseUpload(false, null, snapshot); }, host).className = "dm-primary";
+                        button("停用本媒体弹幕", function () { return update(snapshot.fileIds, null, snapshot); }, host).disabled = !snapshot.activeFileId;
+                        var pickerHost = document.createElement("div"); pickerHost.id = "dm-file-picker"; host.appendChild(pickerHost);
+                        var body = table(host, ["文件", "条数", "状态", "操作"], "已绑定文件");
+                        files.forEach(function (file) {
+                            var id = file.fileId, r = row(body); cell(r, 0, file.storedFileName); cell(r, 1, file.commentCount);
+                            cell(r, 2, id === snapshot.activeFileId ? "生效中" : "未生效");
+                            if (id !== snapshot.activeFileId) button("设为生效", function () { return update(snapshot.fileIds, id, snapshot); }, r);
+                            var actions = more(r);
+                            button("解除绑定", function () {
+                                if (confirm("解除本媒体绑定；文件和其他媒体不受影响。解除生效文件会停用本媒体弹幕。"))
+                                    return update(snapshot.fileIds.filter(function (x) { return x !== id; }), snapshot.activeFileId === id ? null : snapshot.activeFileId, snapshot);
+                            }, actions);
+                            button("替换", function () {
+                                if (confirm("选择新文件替换本媒体绑定；完整发布后生效，旧文件和其他媒体保留。")) chooseUpload(true, id, snapshot);
+                            }, actions);
+                        });
+                        if (!files.length) line(host, "尚未绑定文件。添加已有文件或上传并绑定。");
                     }
-                    function chooseUpload(replace, target) {
+                    async function picker(start, search, context) {
+                        var host = $("dm-file-picker"), generation = ++pickerGeneration;
+                        var result = await req("Files?startIndex=" + start + "&limit=50&search=" + encodeURIComponent(search));
+                        if (!alive || context !== state || selected !== context.mediaId || generation !== pickerGeneration || !host.isConnected) return;
+                        host.replaceChildren(); host.className = "dm-picker";
+                        line(host, "为“" + (selectedName || selected) + "”选择已有文件");
+                        var label = document.createElement("label"); label.textContent = "文件名 ";
+                        var input = document.createElement("input"); input.type = "search"; input.value = search; input.id = "dm-picker-search"; label.appendChild(input); host.appendChild(label);
+                        button("查找文件", function () { return picker(0, input.value, context); }, host);
+                        button("收起", function () { ++pickerGeneration; host.replaceChildren(); host.className = ""; }, host);
+                        var list = document.createElement("div"); list.id = "dm-picker-list"; host.appendChild(list);
+                        paged(list, result, start, function (next) { return picker(next, search, context); }, function (r, file) {
+                            cell(r, 0, file.storedFileName); cell(r, 1, file.commentCount);
+                            var bound = context.fileIds.includes(file.fileId);
+                            button(bound ? "已绑定" : "绑定", async function () {
+                                await update(context.fileIds.concat(file.fileId), context.activeFileId, context);
+                                if (selected === context.mediaId) report("已绑定，当前生效选择保持不变");
+                            }, r).disabled = bound || file.status !== "Published";
+                        }, ["文件名", "条数", "操作"]);
+                    }
+                    function chooseUpload(replace, target, context) {
+                        var intent = context ? { mediaId: context.mediaId, expectedVersion: context.version, operation: replace ? "replace" : "append", replaceFileId: target || null } : { mediaId: null, expectedVersion: null, operation: "import", replaceFileId: null };
                         var input = document.createElement("input");
                         input.type = "file";
                         input.accept = ".xml,.json";
@@ -585,19 +586,24 @@
                                 if (!files.length) return;
                                 if (files.length > 10)
                                     throw new Error("每批最多 10 个文件");
+                                if (context && (selected !== intent.mediaId || context !== state)) throw new Error("媒体或绑定状态已变化，请重新选择文件");
                                 var batchId = crypto.randomUUID();
                                 await req("ImportBatches", "POST", {
                                     batchId: batchId,
-                                    mediaId: selected,
-                                    expectedVersion: state.version,
+                                    mediaId: intent.mediaId,
+                                    expectedVersion: intent.expectedVersion,
                                     fileNames: files.map(function (f) {
                                         return f.name;
                                     }),
-                                    operation: replace ? "replace" : "append",
-                                    replaceFileId: target || null,
+                                    operation: intent.operation,
+                                    replaceFileId: intent.replaceFileId,
                                 });
                                 $("dm-batch").value = batchId;
+                                ++taskGeneration;
+                                ["dm-slots", "dm-tasks-list", "dm-errors"].forEach(function (id) { $(id).replaceChildren(); });
                                 switchTab("tasks");
+                                report(operationName(intent.operation) + "：已创建批次，正在上传");
+                                await tasks(0);
                                 for (var i = 0; i < files.length; i++) {
                                     try {
                                         await upload(batchId, i, files[i]);
@@ -661,6 +667,9 @@
                         });
                     }
                     async function fileList(start) {
+                        var generation = ++fileGeneration, host = $("dm-files-list");
+                        host.replaceChildren(); host.setAttribute("aria-busy", "true");
+                        line(host, "正在加载文件…");
                         var result = await req(
                             "Files?startIndex=" +
                                 start +
@@ -668,31 +677,22 @@
                                 encodeURIComponent($("dm-file-search").value) +
                                 "&unbound=" +
                                 $("dm-unbound").checked,
-                        );
+                        ).catch(function (error) {
+                            if (generation === fileGeneration) { host.replaceChildren(); line(host, "加载失败，请重新搜索"); host.setAttribute("aria-busy", "false"); }
+                            throw error;
+                        });
+                        if (!alive || generation !== fileGeneration) return;
+                        host.setAttribute("aria-busy", "false");
                         paged(
                             $("dm-files-list"),
                             result,
                             start,
                             fileList,
                             function (r, file) {
-                                line(
-                                    r,
-                                    file.storedFileName +
-                                        " · " +
-                                        file.format +
-                                        " · " +
-                                        file.commentCount +
-                                        " 条 · " +
-                                        file.sizeBytes +
-                                        " 字节 · 引用 " +
-                                        file.bindingCount +
-                                        " · " +
-                                        new Date(
-                                            file.importedAtUtcMs,
-                                        ).toLocaleString() +
-                                        " · " +
-                                        file.status,
-                                );
+                                cell(r, 0, file.storedFileName); cell(r, 1, file.format);
+                                cell(r, 2, file.commentCount); cell(r, 3, file.sizeBytes == null ? "—" : (file.sizeBytes / 1024).toFixed(1) + " KB");
+                                cell(r, 4, new Date(file.importedAtUtcMs).toLocaleString()); cell(r, 5, file.bindingCount);
+                                var actions = more(r);
                                 button(
                                     "详情",
                                     async function () {
@@ -708,12 +708,12 @@
                                                 d.contentHash,
                                         );
                                     },
-                                    r,
+                                    actions,
                                 );
                                 button(
                                     "引用媒体",
                                     function () {
-                                        return references(file.fileId, 0, r);
+                                        return references(file.fileId, 0, r.lastElementChild);
                                     },
                                     r,
                                 );
@@ -748,29 +748,7 @@
                                             URL.revokeObjectURL(url);
                                         }, 1000);
                                     },
-                                    r,
-                                );
-                                button(
-                                    "绑定到已选媒体",
-                                    async function () {
-                                        if (!selected)
-                                            throw new Error(
-                                                "请先在媒体绑定中选择影片或单集",
-                                            );
-                                        await bindings();
-                                        await update(
-                                            Array.from(
-                                                new Set(
-                                                    state.fileIds.concat(
-                                                        file.fileId,
-                                                    ),
-                                                ),
-                                            ),
-                                            state.activeFileId,
-                                        );
-                                        report("已绑定，当前生效选择保持不变");
-                                    },
-                                    r,
+                                    actions,
                                 );
                                 button(
                                     "删除文件本体",
@@ -787,9 +765,9 @@
                                             await fileList(start);
                                         }
                                     },
-                                    r,
+                                    actions,
                                 ).disabled = file.bindingCount > 0;
-                            },
+                            }, ["文件名", "格式", "条数", "大小", "导入时间", "引用", "操作"],
                         );
                     }
                     async function references(file, start, parent) {
@@ -813,19 +791,12 @@
                                 return references(file, s, parent);
                             },
                             function (r, b) {
-                                button(
-                                    b.mediaId + " · " + b.checkStatus,
-                                    async function () {
-                                        selected = b.mediaId;
-                                        switchTab("media");
-                                        await bindings();
-                                    },
-                                    r,
-                                );
+                                line(r, (b.mediaName || b.mediaId) + " · " + b.checkStatus + (b.activeFileId === file ? " · 生效" : ""));
                             },
                         );
                     }
                     async function tasks(start) {
+                        var generation = ++taskGeneration;
                         taskStart = start;
                         var batch = $("dm-batch").value.trim(),
                             result = await req(
@@ -837,12 +808,15 @@
                                           encodeURIComponent(batch)
                                         : ""),
                             );
+                        if (!alive || generation !== taskGeneration || tab !== "tasks") return;
                         var slots = $("dm-slots");
                         slots.replaceChildren();
+                        $("dm-confirm-batch").hidden = !result.batch || !result.batch.slots.some(function (s) { return s.taskStatus === "AwaitingConfirmation"; });
+                        $("dm-cancel-batch").hidden = !result.batch || result.batch.status === "Finished";
                         if (result.batch) {
                             line(
                                 slots,
-                                "批次 " +
+                                operationName(result.batch.operation) + " · 批次 " +
                                     result.batch.status +
                                     " · 完成 " +
                                     result.batch.slots.filter(function (s) {
@@ -851,7 +825,7 @@
                                     "/" +
                                     result.batch.slots.length,
                             );
-                            result.batch.slots.forEach(function (s) {
+                            result.batch.slots.filter(function (s) { return !s.taskId; }).forEach(function (s) {
                                 var r = row(slots);
                                 line(
                                     r,
@@ -897,42 +871,15 @@
                             start,
                             tasks,
                             function (r, t) {
-                                line(
-                                    r,
-                                    t.taskId +
-                                        " · " +
-                                        t.status +
-                                        " · " +
-                                        (t.stage || "") +
-                                        (t.stagePercent == null
-                                            ? ""
-                                            : " " +
-                                              t.stagePercent.toFixed(1) +
-                                              "%"),
-                                );
-                                line(
-                                    r,
-                                    "已处理 " +
-                                        t.processedComments +
-                                        " / 正常 " +
-                                        t.normalComments +
-                                        " / 异常 " +
-                                        t.abnormalComments +
-                                        " / 已导入 " +
-                                        t.importedComments +
-                                        " / 已跳过 " +
-                                        t.skippedComments +
-                                        (t.deadlineAtUtcMs
-                                            ? " · 到期 " +
-                                              new Date(
-                                                  t.deadlineAtUtcMs,
-                                              ).toLocaleString()
-                                            : ""),
-                                );
+                                cell(r, 0, t.originalFileName || t.taskId);
+                                cell(r, 1, operationName(t.operation));
+                                cell(r, 2, t.status + " · " + (t.stage || "") + (t.stagePercent == null ? "" : " " + t.stagePercent.toFixed(1) + "%"));
+                                cell(r, 3, "正常 " + t.normalComments + " / 异常 " + t.abnormalComments + " / 已导入 " + t.importedComments + " / 已跳过 " + t.skippedComments);
+                                if (t.deadlineAtUtcMs) line(r.children[3], "到期 " + new Date(t.deadlineAtUtcMs).toLocaleString());
                                 if (t.errorCode) line(r, t.errorCode);
                                 if (t.status === "Completed")
                                     line(r, "已提交：" + t.resultCode);
-                                button(
+                                if (t.abnormalComments > 0) button(
                                     "异常明细",
                                     function () {
                                         return errors(t.taskId, 0);
@@ -954,7 +901,7 @@
                                         },
                                         r,
                                     );
-                                if (t.status === "AwaitingConflictResolution")
+                                if (t.operation !== "import" && t.status === "AwaitingConflictResolution")
                                     button(
                                         "刷新绑定并决定继续",
                                         async function () {
@@ -1021,7 +968,7 @@
                                         },
                                         r,
                                     );
-                            },
+                            }, ["文件名", "操作类型", "阶段 / 进度", "统计", "操作"],
                         );
                     }
                     async function errors(id, start) {
@@ -1065,6 +1012,8 @@
                             }),
                         );
                     });
+                    $("dm-import-files").onclick = function () { chooseUpload(false); };
+                    switchTab("media");
                     $("dm-search-media").onclick = action(function () {
                         return media(0);
                     });
