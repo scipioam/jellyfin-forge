@@ -14,7 +14,7 @@ public sealed class WebResourceController : ControllerBase
     /// Static version of the fixed web resources. Bump it whenever the embedded
     /// bootstrap/danmuku assets change so clients revalidate cached copies.
     /// </summary>
-    public const string ResourceVersion = "m1-v3";
+    public const string ResourceVersion = "m1-v4";
 
     public const string BootstrapResourceName = "Jellyfin.Plugin.Danmuku.Web.bootstrap.js";
     public const string ScriptResourceName = "Jellyfin.Plugin.Danmuku.Web.danmuku.js";

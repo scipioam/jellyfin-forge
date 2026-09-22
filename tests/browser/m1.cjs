@@ -577,8 +577,8 @@ function p95(values) {
             await page
                 .locator('.danmuku-panel select[aria-label="区域"]')
                 .inputValue(),
-            "50",
-            "new user defaults to the approved upper-half display area",
+            "75",
+            "new user defaults to the approved three-quarter display area",
         );
         assert(
             await page

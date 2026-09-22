@@ -165,7 +165,7 @@
         var prefs = {
             enabled: true,
             density: "medium",
-            area: 50,
+            area: 75,
             opacity: 75,
             scale: 100,
         };
@@ -174,7 +174,7 @@
         } catch (_) {}
         if (!["low", "medium", "high"].includes(prefs.density))
             prefs.density = "medium";
-        if (![25, 50, 75, 100].includes(prefs.area)) prefs.area = 50;
+        if (![25, 50, 75, 100].includes(prefs.area)) prefs.area = 75;
         prefs.opacity = Math.max(
             10,
             Math.min(100, Math.round((+prefs.opacity || 75) / 5) * 5),
