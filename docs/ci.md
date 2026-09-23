@@ -1,6 +1,6 @@
 # CI 策略
 
-配置入口为 `.github/workflows/ci.yml`。两插件仍独立构建、测试、打包；不自动发布或部署。
+配置入口为 `.github/workflows/ci.yml`。两插件仍独立构建、测试、打包；仅 Danmuku 支持按标签自动生成 Release 草稿，不自动正式发布或部署。
 
 ## 触发与覆盖
 
@@ -9,7 +9,8 @@
 | 纯文档分支 push／PR | 不触发 workflow，不执行测试 |
 | 开发分支代码 push | 两插件构建、单元测试、打包 |
 | 代码 PR（含文档与代码混合改动） | 两插件构建、单测、打包；三组加载 smoke；HTTP／部署与 Chromium、Firefox 的根路径及 `/jellyfin` 回归 |
-| `main` 代码 push／标签 push | 与代码 PR 相同 |
+| `main` 代码 push／普通标签 push | 与代码 PR 相同 |
+| `danmuku-vX.Y.Z` 标签 push | 先校验标签和项目版本，再执行完整常规验证；成功后上传 Danmuku Release 草稿 |
 | 手动 `regular`（默认） | 完整常规验证，允许用于纯文档提交 |
 | 手动 `performance` | 两插件构建、单测、打包及 Danmuku 性能长测；性能入口自身仍包含 HTTP／部署准备验证 |
 | 手动 `all` | 完整常规验证与性能长测 |
@@ -22,7 +23,7 @@
 
 ## 构建与资源
 
-`standalone` 矩阵分别恢复对应测试工程的锁定依赖，构建测试工程及其插件引用，再以 `--no-build --no-restore` 运行单测。通过后调用 `build/package.py` 打包刚测试的二进制，不再调用会重新构建的 `package.sh`。
+轻量 `release-checks` 先运行发布工具测试；Danmuku 发布标签还须匹配项目版本，非法标签在构建前失败。`standalone` 矩阵分别恢复对应测试工程的锁定依赖，构建测试工程及其插件引用，再以 `--no-build --no-restore` 运行单测。通过后调用 `build/package.py` 打包刚测试的二进制，不再调用会重新构建的 `package.sh`。
 
 smoke、集成和性能任务依赖 `standalone` 成功，下载同次 workflow 的 ZIP 与校验文件，通过 SHA-256 检查后直接调用 Python 测试入口；两个浏览器路径使用同一包。下游无需 .NET SDK，也不会重新编译或打包。开发者本地 `build/*.sh` 仍保留原先自动构建的便利行为。
 
@@ -36,9 +37,46 @@ NuGet 缓存由提交的 `packages.lock.json` 标识，npm 缓存由浏览器 `p
 - 性能长测按需运行，不列入 PR 的完整常规验证。人工浏览器验收、Synology/SPK 及生产部署也不由 CI 绿色代替。
 - 此配置的本地语法、路由和命令验证不等于 GitHub 远端执行通过；artifact 传递、缓存及实际触发结果须由推送后的运行确认。
 
-## 本次调整验证记录
+## CI 分层调整的历史验证记录
 
 - Actionlint 1.7.7、各内联 Bash 语法及 `git diff --check` 通过；21 组任务路由判断、10 组纯文档／代码／混合路径案例通过。
 - 按新 workflow 的构建命令串行执行：Danmuku 182 通过、4 外部样本跳过；AgentBridge 4/4，构建无错误或警告。TRX 已生成，两插件直接打包及 SHA-256 校验通过。
 - 直接使用上述包执行 Python smoke 入口，三组加载／配置持久化场景通过；未在 smoke 前重复编译。入口工具测试 3/3，布局／引导测试 10/10。
 - 本轮没有重跑完整双浏览器矩阵或性能长测，没有执行远端 GitHub Actions；产物跨 job 下载、缓存命中和 GitHub 实际事件过滤尚待远端确认。插件功能代码及本地构建入口未修改。
+
+
+## Danmuku Release 草稿
+
+当前仅发布已实施的 Danmuku。AgentBridge 继续参与构建和共存检查，但没有 Release 发布任务，`agentbridge-v…` 等其他标签只执行常规 CI。发布入口是 `push` 的 `danmuku-vX.Y.Z` 标签；分支 push、PR 和手动运行（包括在标签上手动运行）均不会写入 Release。
+
+标签必须使用三段非负整数版本（如 `danmuku-v0.0.1`），与该提交的 Danmuku `.csproj` 中 `Version` 完全一致，`AssemblyVersion` 必须为该版本加 `.0`。当前未定义预发布后缀标签。Release 草稿不是 prerelease，是否标记预发布可在人工确认时决定。
+
+`danmuku-release-draft` 等待两插件单测／打包、三组 smoke、HTTP／部署及双浏览器双路径集成全部成功；失败、取消或跳过必需任务都不能进入发布。性能长测仍按需运行，不是发布门禁。该任务只下载同次运行的 `jellyfin-plugin-danmuku` artifact，核对 ZIP 完整性、SHA-256、包名、版本和 GUID，再上传以下两项，不重新构建，不附带 AgentBridge：
+
+- `jellyfin-plugin-danmuku-X.Y.Z.zip`
+- `jellyfin-plugin-danmuku-X.Y.Z.zip.sha256`
+
+只有草稿任务获得 `contents: write`，其余任务保持 `contents: read`。使用 Actions 提供的 `GITHUB_TOKEN`，无需增加个人访问令牌；仓库或组织策略须允许该任务申请写权限。创建时使用 `--verify-tag --draft`，不会自动创建标签或正式发布。已存在草稿时，只替换上述两个生成附件以恢复中断上传，保留人工编辑的说明和其他附件；若同名 Release 已正式发布，则失败退出，不覆盖正式版本。操作使用 [GitHub CLI 的草稿创建](https://cli.github.com/manual/gh_release_create)及[附件上传](https://cli.github.com/manual/gh_release_upload)能力。
+
+### 发布步骤
+
+1. 先将此工作流及待发布功能通过 PR 合并到 `main`；待打标签的提交必须包含此发布配置。
+2. 确认 `.csproj` 版本正确，更新本地 `main`，再对确定的提交打标签。首次版本示例：
+
+   ```bash
+   git switch main
+   git pull --ff-only origin main
+   git tag -a danmuku-v0.0.1 -m "Danmuku 0.0.1" HEAD
+   git push origin danmuku-v0.0.1
+   ```
+
+3. 在 Actions 等待该标签的完整常规 CI 和 `danmuku-release-draft` 成功，再进入仓库 Releases 查看 **Danmuku 0.0.1** 草稿。
+4. 核对版本、说明及两个附件，完成必要人工验收后点击 **Publish release**。等待上传完成后再发布，避免与草稿补传同时操作。ZIP 用于安装，GitHub 自动提供的源码归档不代替插件安装包。
+
+上传中断时可在 Actions 重跑失败任务，恢复同一草稿。不要通过移动已发布标签或覆盖正式附件修正版本；正式发布后的改动应提升插件版本，再按新标签发布。草稿删除及标签清理由维护者明确操作，此工具不自动执行。
+
+### 草稿流程本地验证
+
+发布工具的 16 项自动化测试通过，覆盖标签／程序集／包身份不一致、错误校验和、缺包、混入另一插件、创建草稿、补传、权限失败及拒绝修改正式 Release；GitHub 写入由测试替身模拟，没有创建远端测试 Release。Actionlint、脚本语法、7 组发布事件路由、必需依赖和权限范围检查通过，现有 0.0.1 实际包通过本地身份与校验和核对。另以只读请求核对 GitHub 分页查询传输格式；草稿恢复查找覆盖后续页，不依赖仅面向已发布版本的按标签查询。
+
+本轮未改变插件代码、构建和业务测试入口，未重新编译或运行重度浏览器／性能验证，未启动开发容器。尚未推送发布标签，真实的标签触发、授权及 Release 上传需在配置合并后的首次发布中验证；不将模拟测试视为远端发布成功。
