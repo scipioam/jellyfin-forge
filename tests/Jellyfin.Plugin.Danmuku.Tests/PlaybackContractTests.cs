@@ -64,7 +64,7 @@ public sealed class PlaybackContractTests
         Assert.All(responses, r => Assert.Equal(responses[0], r));
         using var payload = JsonDocument.Parse(responses[0]);
         var display = payload.RootElement.GetProperty("display");
-        Assert.Equal("m1-density-v1", display.GetProperty("renderVersion").GetString());
+        Assert.Equal("m2-speed-v1", display.GetProperty("renderVersion").GetString());
         Assert.Equal(600, display.GetProperty("limits").GetProperty("overlap").GetInt32());
         Assert.Equal(1, x.Scalar("SELECT COUNT(*) FROM PlaybackRequests"));
         var state = await x.Bindings.ReadAsync("media");

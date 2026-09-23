@@ -44,6 +44,7 @@ class Instance:
         self.command = ["docker", "compose", "-f", str(self.data / "compose.json")]
         self.restore = []
         self.results = []
+        self.additional_media_names = []
 
     def request(
         self, path, body=None, token=None, method=None, expected=200, raw=False
@@ -196,6 +197,7 @@ class Instance:
                     f"{self.data}/config:/config",
                     f"{self.data}/cache:/cache",
                     f"{media}:/media/Synthetic.mp4:ro",
+                    *[f"{media}:/media/{name}:ro" for name in self.additional_media_names],
                     f"{entry}/current/index.html:/jellyfin/jellyfin-web/index.html:ro",
                 ],
             }
@@ -673,7 +675,7 @@ class Instance:
         ]:
             self.request(route, {}, method=method, expected=401)
             self.request(route, {}, self.viewer, method=method, expected=403)
-        playback = "/Danmuku/Playback/" + self.item + "?renderVersion=m1-density-v1&playbackId=" + uuid.uuid4().hex
+        playback = "/Danmuku/Playback/" + self.item + "?renderVersion=m2-speed-v1&playbackId=" + uuid.uuid4().hex
         self.request(playback, expected=401)
         self.request(playback, token=self.restricted, expected=403)
         self.request("/Danmuku/Files?limit=101", token=self.admin, expected=422)
@@ -695,8 +697,8 @@ class Instance:
             missing.pop(field)
             self.request("/Plugins/" + PLUGIN + "/Configuration", missing, self.admin, expected=400)
             check(self.request("/Plugins/" + PLUGIN + "/Configuration", token=self.admin) == config, "missing render limit changed config")
-        self.request(playback.replace("renderVersion=m1-density-v1&", ""), token=self.admin, expected=409)
-        self.request(playback.replace("m1-density-v1", "future"), token=self.admin, expected=409)
+        self.request(playback.replace("renderVersion=m2-speed-v1&", ""), token=self.admin, expected=409)
+        self.request(playback.replace("m2-speed-v1", "future"), token=self.admin, expected=409)
         batch = self.batch(["abnormal.json", "pending.xml"])
         task = self.task(
             batch,
@@ -761,8 +763,8 @@ class Instance:
             self.request(playback, token=self.viewer)["status"] == "Disabled",
             "disabled cache bypass",
         )
-        check(self.request(playback.replace("renderVersion=m1-density-v1&", ""), token=self.viewer)["status"] == "Disabled", "disabled must precede render contract mismatch")
-        self.request(playback.replace("renderVersion=m1-density-v1&", ""), token=self.restricted, expected=403)
+        check(self.request(playback.replace("renderVersion=m2-speed-v1&", ""), token=self.viewer)["status"] == "Disabled", "disabled must precede render contract mismatch")
+        self.request(playback.replace("renderVersion=m2-speed-v1&", ""), token=self.restricted, expected=403)
         config["EnableWebSupport"] = config["WebEnabled"] = True
         self.request(
             "/Plugins/" + PLUGIN + "/Configuration", config, self.admin, expected=204
@@ -842,7 +844,7 @@ class Instance:
             "/Users/AuthenticateByName", {"Username": "m1-viewer", "Pw": self.password}
         )["AccessToken"]
         restart_playback = (
-            "/Danmuku/Playback/" + self.item + "?renderVersion=m1-density-v1&playbackId=" + uuid.uuid4().hex
+            "/Danmuku/Playback/" + self.item + "?renderVersion=m2-speed-v1&playbackId=" + uuid.uuid4().hex
         )
         self.request(restart_playback, token=self.admin)
         run(*self.command, "restart", "jellyfin", capture_output=True)

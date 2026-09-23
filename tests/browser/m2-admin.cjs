@@ -1,0 +1,65 @@
+'use strict';
+const assert = require('node:assert/strict');
+const path = require('node:path');
+module.exports = async function ({ page, dir, engine, item, secondItem }) {
+    page.on('dialog', dialog => dialog.accept());
+    await page.evaluate(() => { location.hash = '/configurationpage?name=Danmuku'; });
+    await page.locator('#DanmukuConfigPage').waitFor();
+    await page.locator('#dm-media-list button[data-media-id="' + item + '"]').click();
+    // Two actual library videos: a late A preview must never appear in B.
+    assert(secondItem && secondItem !== item);
+    await page.getByRole('button', { name: '新建合并方案', exact: true }).click();
+    await page.getByRole('button', { name: '查找来源文件', exact: true }).click();
+    let entered, release;
+    const pending = new Promise(resolve => { entered = resolve; });
+    const gate = new Promise(resolve => { release = resolve; });
+    const routePattern = new RegExp('/Danmuku/Media/' + item + '/CombinePlans/Preview');
+    await page.route(routePattern, async route => {
+        const response = await route.fetch(); entered(); await gate;
+        await route.fulfill({ response }).catch(() => {});
+    });
+    await page.getByRole('button', { name: '添加片段', exact: true }).first().click();
+    await pending;
+    await page.locator('#dm-media-list button[data-media-id="' + secondItem + '"]').click();
+    await page.waitForFunction(() => !document.querySelector('#dm-plan-editor'));
+    release(); await page.unroute(routePattern);
+    await page.getByRole('button', { name: '新建合并方案', exact: true }).waitFor();
+    assert.equal(await page.locator('#dm-plan-editor').count(), 0);
+    await page.locator('#dm-media-list button[data-media-id="' + item + '"]').click();
+    await page.getByRole('button', { name: '新建合并方案', exact: true }).click();
+    const editor = page.locator('#dm-plan-editor');
+    const name = await editor.getByRole('textbox', { name: '方案名称', exact: true }).inputValue();
+    assert.match(name, /^combine-\d+$/);
+    await editor.getByRole('button', { name: '查找来源文件', exact: true }).click();
+    await editor.getByRole('button', { name: '添加片段', exact: true }).first().click();
+    await editor.getByRole('textbox', { name: '片段 1 源开始', exact: true }).fill('10:00');
+    await editor.getByRole('textbox', { name: '片段 1 视频起点', exact: true }).fill('20:00');
+    await editor.getByRole('button', { name: '添加片段', exact: true }).first().click();
+    await editor.getByRole('textbox', { name: '片段 2 视频起点', exact: true }).fill('30:00');
+    await editor.getByRole('button', { name: '将此范围应用到全部', exact: true }).first().click();
+    assert.equal(await editor.getByRole('textbox', { name: '片段 2 源开始', exact: true }).inputValue(), '10:00');
+    assert.equal(await editor.getByRole('textbox', { name: '片段 2 视频起点', exact: true }).inputValue(), '30:00');
+    await editor.getByRole('button', { name: '撤销范围同步', exact: true }).click();
+    assert.equal(await editor.getByRole('textbox', { name: '片段 2 源开始', exact: true }).inputValue(), '00:00');
+    await editor.getByRole('button', { name: '移除片段', exact: true }).last().click();
+    await editor.getByRole('button', { name: '保存并启用', exact: true }).waitFor();
+    await page.waitForFunction(() => !document.querySelector('#dm-plan-editor button.dm-primary').disabled);
+    for (const width of [1440, 390]) {
+        await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+        assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'no page-wide overflow');
+        await page.screenshot({ path: path.join(dir, engine + '-m2-editor-' + width + '.png'), fullPage: true });
+    }
+    await editor.getByRole('button', { name: '保存并启用', exact: true }).click();
+    await editor.waitFor({ state: 'detached' });
+    await page.locator('#dm-binding').getByText('当前：合并方案：' + name, { exact: false }).waitFor();
+    await page.locator('#dm-binding tr').filter({ hasText: name }).getByRole('button', { name: '编辑方案', exact: true }).click();
+    await page.locator('#dm-plan-editor').getByRole('textbox', { name: '方案名称', exact: true }).fill(engine + '-renamed');
+    await page.waitForFunction(() => !document.querySelector('#dm-plan-editor button.dm-primary').disabled);
+    await page.locator('#dm-plan-editor').getByRole('button', { name: '保存方案', exact: true }).click();
+    await page.locator('#dm-plan-editor').waitFor({ state: 'detached' });
+    await page.locator('#dm-binding').getByText('当前：合并方案：' + engine + '-renamed', { exact: false }).waitFor();
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.evaluate(() => { location.hash = '/home'; });
+    await page.locator('.homePage .card[data-id]').first().waitFor();
+    await page.waitForLoadState('networkidle');
+};

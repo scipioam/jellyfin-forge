@@ -3,6 +3,9 @@
     'use strict';
     function create(items, options) {
         var n = items.length, W = options.width, H = options.height * options.area / 100;
+        var speed = options.scrollSpeed;
+        if (typeof speed !== 'number' || !Number.isFinite(speed) || speed < .5 || speed > 2 || Math.abs(speed * 10 - Math.round(speed * 10)) > 1e-8) speed = 1;
+        var scrollDurationMs = 8000 / speed, lookback = Math.max(scrollDurationMs, 4000);
         if (n > 20000 || !Number.isFinite(W) || !Number.isFinite(H) || W < 0 || H < 0) throw Error('Invalid layout geometry');
         var widths = new Float64Array(n), heights = new Float64Array(n), ys = new Float64Array(n);
         var decisions = new Uint8Array(n), active = [], next = 0, accepted = 0, used = 0, reuse = -1;
@@ -14,14 +17,14 @@
         var bytes = occupancy.byteLength + widths.byteLength + heights.byteLength + ys.byteLength + decisions.byteLength + counts.byteLength;
         if (bytes > 2 * 1024 * 1024) throw Error('Layout buffer budget exceeded');
         var dropped = { budget: 0, count: 0, collision: 0, dimensions: 0 };
-        function end(i) { return items[i].timeMs + (items[i].mode === 1 ? 8000 : 4000); }
-        function x(i, time) { return items[i].mode === 1 ? W - (time - items[i].timeMs) / 8000 * (W + widths[i]) : (W - widths[i]) / 2; }
+        function end(i) { return items[i].timeMs + (items[i].mode === 1 ? scrollDurationMs : 4000); }
+        function x(i, time) { return items[i].mode === 1 ? W - (time - items[i].timeMs) / scrollDurationMs * (W + widths[i]) : (W - widths[i]) / 2; }
         function area(i) { return Math.min(widths[i], W) * heights[i]; }
         function horizontal(a, b, time) {
             if (items[a].mode === 1 && items[b].mode === 1) {
                 var elapsed = time - items[b].timeMs;
                 var wide = Math.max(widths[a], widths[b]);
-                return elapsed * (W + wide) < 8000 * (wide + 12);
+                return elapsed * (W + wide) < scrollDurationMs * (wide + 12);
             }
             var until = Math.min(end(a), end(b));
             var d0 = x(a, time) - x(b, time), d1 = x(a, until) - x(b, until);
@@ -111,7 +114,7 @@
             },
             snapshot: function (time) {
                 var lo = 0, hi = next;
-                while (lo < hi) { var mid = (lo + hi) >>> 1; if (items[mid].timeMs <= time - 8000) lo = mid + 1; else hi = mid; }
+                while (lo < hi) { var mid = (lo + hi) >>> 1; if (items[mid].timeMs <= time - lookback) lo = mid + 1; else hi = mid; }
                 var result = [], occupancy = 0;
                 for (var i = lo; i < next && items[i].timeMs <= time; i++) if (decisions[i] && end(i) > time) { result.push(i); occupancy += area(i); }
                 return { indices: result, area: occupancy, budget: budget, cap: cap };
@@ -121,7 +124,7 @@
             get computed() { return next; }
         };
     }
-    var api = Object.freeze({ resourceVersion: 'm1-v5', renderVersion: 'm1-density-v1', create: create });
+    var api = Object.freeze({ resourceVersion: 'm2-v1', renderVersion: 'm2-speed-v1', create: create });
     if (typeof module === 'object' && module.exports) module.exports = api;
     else root.DanmukuLayout = api;
 })(typeof window === 'object' ? window : globalThis);

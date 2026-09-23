@@ -89,13 +89,13 @@ public static class PlaybackSelector
         return comments;
     }
 
-    private static ulong Fnv(ulong hash, ReadOnlySpan<byte> input)
+    internal static ulong Fnv(ulong hash, ReadOnlySpan<byte> input)
     {
         foreach (var value in input) hash = unchecked((hash ^ value) * 1099511628211UL);
         return hash;
     }
 
-    private static ulong Hash(ulong prefix, long first, long second)
+    internal static ulong Hash(ulong prefix, long first, long second)
     {
         // Stable sampling only, not a security primitive. SHA-256
         // derives the seed; original-content and authentication-session hashes also remain SHA-256.

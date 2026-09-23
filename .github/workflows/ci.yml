@@ -109,7 +109,7 @@ jobs:
     needs: standalone
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))) || (github.event_name == 'workflow_dispatch' && inputs.suite != 'performance')
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -132,6 +132,8 @@ jobs:
       - run: node --test tests/browser/danmuku-layout.test.cjs
       - run: python3 tests/integration/m1.py --browser
       - run: python3 tests/integration/m1.py --browser --base-url /jellyfin
+      - run: python3 tests/integration/m2.py --browser
+      - run: python3 tests/integration/m2.py --browser --base-url /jellyfin
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -142,6 +144,17 @@ jobs:
             artifacts/m1/integration/**/server.log
             artifacts/m1/integration/**/*-failure.json
             artifacts/m1/integration/**/*.png
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: danmuku-m2-integration-results
+          path: |
+            artifacts/m2/integration/*/*-results.json
+            artifacts/m2/integration/*/*-browser.json
+            artifacts/m2/integration/*/*-failure.json
+            artifacts/m2/integration/*/server.log
+            artifacts/m2/integration/*/*-m2-*.png
           if-no-files-found: ignore
   danmuku-performance:
     needs: standalone

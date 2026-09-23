@@ -79,14 +79,14 @@ public sealed class SqliteStorageContractTests
         Assert.Equal(
             new[]
             {
-                "BindingCheckJobs", "Comments", "Files", "ImportBatches", "ImportErrors", "ImportSlots",
+                "BindingCheckJobs", "CombinePlans", "CombineSegments", "Comments", "Files", "ImportBatches", "ImportErrors", "ImportSlots",
                 "ImportTasks", "MediaBindings", "MediaState", "PlaybackRequests", "SchemaVersion"
             },
             QueryNames(connection, "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name;"));
         Assert.Equal(
             new[]
             {
-                "IX_BindingCheckJobs_Active", "IX_Comments_File_Time", "IX_Files_ContentHash", "IX_Files_StoredFileName", "IX_ImportBatches_FinishedAt",
+                "IX_BindingCheckJobs_Active", "IX_CombineSegments_FileId", "IX_Comments_File_Time", "IX_Files_ContentHash", "IX_Files_StoredFileName", "IX_ImportBatches_FinishedAt",
                 "IX_ImportBatches_MediaId", "IX_ImportErrors_Task_SourceOrdinal", "IX_ImportTasks_FinishedAt",
                 "IX_MediaBindings_FileId", "IX_PlaybackRequests_ExpiresAt", "IX_PlaybackRequests_SessionHash",
                 "IX_PlaybackRequests_UserMedia"

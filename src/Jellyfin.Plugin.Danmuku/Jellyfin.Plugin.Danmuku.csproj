@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <Version>0.0.1</Version>
-    <AssemblyVersion>0.0.1.0</AssemblyVersion>
+    <Version>0.0.2</Version>
+    <AssemblyVersion>0.0.2.0</AssemblyVersion>
     <PluginGuid>6f79690c-c1d0-4738-b241-09aaa2c570e7</PluginGuid>
     <Description>Independent danmuku management for Jellyfin.</Description>
   </PropertyGroup>

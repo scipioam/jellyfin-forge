@@ -480,7 +480,7 @@ public sealed class PublishService : IPublishService
                 InsertMediaState(connection, transaction, plan.MediaId!, plan.FileId, isDeactivated: 0, version: 1);
                 return (bindingCreated, true);
             }
-            var activate = priorBindings == 0 && state.IsDeactivated == 0 && state.ActiveFileId is null;
+            var activate = priorBindings == 0 && state.IsDeactivated == 0 && state.ActiveFileId is null && state.ActivePlanId is null;
             if (bindingCreated)
                 Execute(connection, transaction,
                     "UPDATE MediaState SET ActiveFileId=CASE WHEN $activate=1 THEN $file ELSE ActiveFileId END,Version=Version+1 WHERE MediaId=$media",
@@ -535,11 +535,11 @@ public sealed class PublishService : IPublishService
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "SELECT ActiveFileId, IsDeactivated FROM MediaState WHERE MediaId = $mediaId;";
+        command.CommandText = "SELECT ActiveFileId, IsDeactivated, ActivePlanId FROM MediaState WHERE MediaId = $mediaId;";
         command.Parameters.AddWithValue("$mediaId", mediaId);
         using var reader = command.ExecuteReader();
         return reader.Read()
-            ? new MediaStateRecord(GetNullableString(reader, 0), reader.GetInt32(1))
+            ? new MediaStateRecord(GetNullableString(reader, 0), reader.GetInt32(1), GetNullableString(reader, 2))
             : null;
     }
 
@@ -686,5 +686,5 @@ public sealed class PublishService : IPublishService
         string? StagedOriginalPath,
         string? StagedAssetPath);
 
-    private sealed record MediaStateRecord(string? ActiveFileId, int IsDeactivated);
+    private sealed record MediaStateRecord(string? ActiveFileId, int IsDeactivated, string? ActivePlanId = null);
 }

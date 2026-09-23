@@ -37,6 +37,12 @@ NuGet 缓存由提交的 `packages.lock.json` 标识，npm 缓存由浏览器 `p
 - 性能长测按需运行，不列入 PR 的完整常规验证。人工浏览器验收、Synology/SPK 及生产部署也不由 CI 绿色代替。
 - 此配置的本地语法、路由和命令验证不等于 GitHub 远端执行通过；artifact 传递、缓存及实际触发结果须由推送后的运行确认。
 
+## M2 接入进度
+
+M2 实施中，常规 `danmuku-integration` 已追加两路径 `tests/integration/m2.py --browser`，内部串行执行 Chromium／Firefox，超时调整为 120 分钟。继续直接使用同次构建下载的包，不重新打包；M2 HTTP 结果记录包哈希。独立的 `danmuku-m2-integration-results` artifact 在失败时仍上传明确白名单内的结果、日志及截图，不递归上传配置、凭据或数据库。
+
+当前 M2 驱动仅覆盖已实现功能子集，详见 [M2 验证记录](SpecAndPlan/M2-Danmuku-Validation.md)。计划中的 24 组 M2 性能＋2 组 M1 基线、缺组／失败汇总及故意失败证据验证尚未实施；现有手动性能 job 仍是 M1 入口，不能称为 M2 性能验收。此段不改变下面的历史验证事实，也不表示远端 CI 已执行。
+
 ## CI 分层调整的历史验证记录
 
 - Actionlint 1.7.7、各内联 Bash 语法及 `git diff --check` 通过；21 组任务路由判断、10 组纯文档／代码／混合路径案例通过。

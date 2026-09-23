@@ -9,7 +9,7 @@ public static class SchemaMigrations
     /// <summary>
     /// Gets the schema version this plugin build expects.
     /// </summary>
-    public const int CurrentVersion = 4;
+    public const int CurrentVersion = 5;
 
     /// <summary>
     /// Gets the default migration list used in production.
@@ -19,8 +19,52 @@ public static class SchemaMigrations
         new SchemaMigration(1, "Initial Danmuku schema", InitialSchemaSql),
         new SchemaMigration(2, "Add publish intent fields to ImportTasks", PublishIntentSql),
         new SchemaMigration(3, "Import lifecycle and media checks", ImportLifecycleSql, RebuildsReferencedTables: true),
-        new SchemaMigration(4, "Allow file-only import batches", IndependentImportSql, RebuildsReferencedTables: true)
+        new SchemaMigration(4, "Allow file-only import batches", IndependentImportSql, RebuildsReferencedTables: true),
+        new SchemaMigration(5, "Add media combine plans", CombinePlansSql, RebuildsReferencedTables: true)
     ];
+
+    private const string CombinePlansSql = """
+        CREATE TABLE CombinePlans (
+            PlanId TEXT NOT NULL PRIMARY KEY,
+            MediaId TEXT NOT NULL,
+            Name TEXT NOT NULL COLLATE BINARY CHECK (length(Name) BETWEEN 1 AND 100 AND Name = trim(Name)),
+            Version INTEGER NOT NULL CHECK (typeof(Version) = 'integer' AND Version >= 0),
+            CreatedAtUtcMs INTEGER NOT NULL,
+            UpdatedAtUtcMs INTEGER NOT NULL,
+            UNIQUE (MediaId, Name),
+            UNIQUE (MediaId, PlanId)
+        );
+        CREATE TABLE CombineSegments (
+            PlanId TEXT NOT NULL REFERENCES CombinePlans(PlanId) ON DELETE CASCADE,
+            Ordinal INTEGER NOT NULL CHECK (typeof(Ordinal) = 'integer' AND Ordinal >= 0),
+            FileId TEXT NOT NULL REFERENCES Files(FileId) ON DELETE RESTRICT,
+            SourceStartMs INTEGER NOT NULL CHECK (typeof(SourceStartMs) = 'integer' AND SourceStartMs BETWEEN 0 AND 9007199254740991),
+            SourceEndMs INTEGER NULL CHECK (SourceEndMs IS NULL OR (typeof(SourceEndMs) = 'integer' AND SourceEndMs > SourceStartMs AND SourceEndMs <= 9007199254740991)),
+            TargetStartMs INTEGER NOT NULL CHECK (typeof(TargetStartMs) = 'integer' AND TargetStartMs BETWEEN 0 AND 9007199254740991),
+            PRIMARY KEY (PlanId, Ordinal)
+        );
+        CREATE INDEX IX_CombineSegments_FileId ON CombineSegments(FileId);
+        CREATE TABLE MediaState_new (
+            MediaId TEXT NOT NULL PRIMARY KEY,
+            ActiveFileId TEXT NULL,
+            IsDeactivated INTEGER NOT NULL DEFAULT 0 CHECK (IsDeactivated IN (0,1)),
+            Version INTEGER NOT NULL DEFAULT 0 CHECK (typeof(Version) = 'integer' AND Version >= 0),
+            CheckStatus TEXT NOT NULL DEFAULT 'Unchecked' CHECK (CheckStatus IN ('Unchecked','Exists','Missing','CheckFailed')),
+            CheckedAtUtcMs INTEGER NULL,
+            ActivePlanId TEXT NULL,
+            CHECK (ActiveFileId IS NULL OR ActivePlanId IS NULL),
+            CHECK (IsDeactivated = 0 OR (ActiveFileId IS NULL AND ActivePlanId IS NULL)),
+            FOREIGN KEY (MediaId, ActiveFileId) REFERENCES MediaBindings(MediaId, FileId) DEFERRABLE INITIALLY DEFERRED,
+            FOREIGN KEY (MediaId, ActivePlanId) REFERENCES CombinePlans(MediaId, PlanId) DEFERRABLE INITIALLY DEFERRED
+        );
+        INSERT INTO MediaState_new(MediaId,ActiveFileId,IsDeactivated,Version,CheckStatus,CheckedAtUtcMs)
+            SELECT MediaId,ActiveFileId,IsDeactivated,Version,CheckStatus,CheckedAtUtcMs FROM MediaState;
+        DROP TABLE MediaState;
+        ALTER TABLE MediaState_new RENAME TO MediaState;
+        ALTER TABLE PlaybackRequests ADD COLUMN SourceKind TEXT NOT NULL DEFAULT 'file' CHECK (SourceKind IN ('file','plan','disabled'));
+        ALTER TABLE PlaybackRequests ADD COLUMN PlanId TEXT NULL;
+        ALTER TABLE PlaybackRequests ADD COLUMN PlanVersion INTEGER NULL CHECK (PlanVersion IS NULL OR (typeof(PlanVersion) = 'integer' AND PlanVersion >= 0));
+        """;
 
     private const string IndependentImportSql = """
         CREATE TABLE ImportBatches_new (

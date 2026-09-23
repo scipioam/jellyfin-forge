@@ -36,7 +36,7 @@ public sealed class FileDeletionCoordinator : IFileDeletionCoordinator
                 var bindingCount = ScalarLong(
                     connection,
                     transaction,
-                    "SELECT COUNT(*) FROM MediaBindings WHERE FileId = $fileId;",
+                    "SELECT (SELECT COUNT(*) FROM MediaBindings WHERE FileId = $fileId) + (SELECT COUNT(DISTINCT PlanId) FROM CombineSegments WHERE FileId = $fileId);",
                     ("$fileId", fileId));
 
                 if (string.Equals(status, StorageStatuses.Files.Deleting, StringComparison.Ordinal)
@@ -72,6 +72,14 @@ public sealed class FileDeletionCoordinator : IFileDeletionCoordinator
 
                 foreach (var candidate in candidates)
                 {
+                    using var references = connection.CreateCommand();
+                    references.CommandText = "SELECT (SELECT COUNT(*) FROM MediaBindings WHERE FileId=$id) + (SELECT COUNT(*) FROM CombineSegments WHERE FileId=$id)";
+                    references.Parameters.AddWithValue("$id", candidate.FileId);
+                    if (Convert.ToInt64(references.ExecuteScalar(), System.Globalization.CultureInfo.InvariantCulture) > 0)
+                    {
+                        failedFiles.Add(candidate.FileId);
+                        continue;
+                    }
                     if (_fileStore.TryDeleteOriginal(candidate.StoredFileName))
                     {
                         deletedFiles.Add(candidate.FileId);
@@ -89,7 +97,7 @@ public sealed class FileDeletionCoordinator : IFileDeletionCoordinator
                     var stillReferenced = ScalarLong(
                         connection,
                         transaction,
-                        "SELECT COUNT(*) FROM MediaBindings WHERE FileId = $fileId;",
+                        "SELECT (SELECT COUNT(*) FROM MediaBindings WHERE FileId = $fileId) + (SELECT COUNT(DISTINCT PlanId) FROM CombineSegments WHERE FileId = $fileId);",
                         ("$fileId", fileId)) > 0;
                     if (stillReferenced)
                     {

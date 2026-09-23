@@ -25,6 +25,7 @@ public sealed class DanmukuErrorsAttribute : ActionFilterAttribute, IExceptionFi
     {
         var (status, code, message) = context.Exception switch
         {
+            Microsoft.AspNetCore.Http.BadHttpRequestException { StatusCode: 413 } => (413, "RequestTooLarge", "The request body exceeds the allowed size."),
             ImportOperationException e => (e.StatusCode, e.Code, e.Message),
             KeyNotFoundException => (404, "NotFound", "The requested object does not exist."),
             ArgumentException => (422, "InvalidInput", "The request fields are invalid."),
@@ -70,7 +71,7 @@ public sealed class ManagementController(ManagementQueries queries, ImportServic
     {
         var result = await deletion.MarkForDeletionAsync(fileId, ct).ConfigureAwait(false);
         if (result.Status == FileDeletionMarkStatus.NotFound) throw new KeyNotFoundException();
-        if (result.Status == FileDeletionMarkStatus.Referenced) throw new ImportOperationException("FileReferenced", 409, "Unbind all media before deleting this file.");
+        if (result.Status == FileDeletionMarkStatus.Referenced) throw new ImportOperationException("FileReferenced", 409, "Remove all single-file bindings and combine-plan references before deleting this file.");
         await deletion.CleanupAsync(ct).ConfigureAwait(false);
         return Ok(new { status = "DeletionRequested" });
     }
@@ -90,7 +91,21 @@ public sealed class ManagementController(ManagementQueries queries, ImportServic
     [HttpGet("Media/{itemId}/Bindings")]
     public Task<MediaBindingSnapshot> ReadBindings(string itemId, CancellationToken ct) => bindings.ReadAsync(MediaId(itemId), ct);
     [HttpPut("Media/{itemId}/Bindings")]
-    public Task<MediaBindingSnapshot> UpdateBindings(string itemId, BindingUpdate body, CancellationToken ct) => bindings.UpdateAsync(MediaId(itemId), body.ExpectedVersion, body.FileIds, body.ActiveFileId, ct);
+    public Task<MediaBindingSnapshot> UpdateBindings(string itemId, BindingUpdate body, CancellationToken ct)
+    {
+        if (body.SelectionIntent is null)
+        {
+            if (body.Selection is not null) throw new ImportOperationException("InvalidBindings", 422, "Selection requires selectionIntent.");
+            return bindings.UpdateAsync(MediaId(itemId), body.ExpectedVersion, body.FileIds, body.ActiveFileId, ct);
+        }
+        if (body.HasActiveFileId) throw new ImportOperationException("InvalidBindings", 422, "Do not mix activeFileId with selectionIntent.");
+        return bindings.UpdateBindingsAsync(MediaId(itemId), body.ExpectedVersion, body.FileIds, body.SelectionIntent, body.Selection, ct);
+    }
+    [HttpPut("Media/{itemId}/Selection")]
+    public Task<MediaBindingSnapshot> Selection(string itemId, SelectionUpdate body, CancellationToken ct) =>
+        bindings.UpdateSelectionAsync(MediaId(itemId), body.ExpectedVersion, new(body.Kind, body.Id, body.ExpectedPlanVersion), ct);
+    [HttpGet("Files/{fileId}/References")]
+    public object References(string fileId, int startIndex = 0, int limit = 50) => queries.References(fileId, startIndex, limit);
     [HttpPost("BindingChecks")]
     public async Task<object> StartCheck(CancellationToken ct) => new { taskId = await bindings.StartCheckAllAsync(ct).ConfigureAwait(false) };
     [HttpGet("BindingChecks/{taskId}")]
@@ -142,6 +157,17 @@ public sealed class ManagementController(ManagementQueries queries, ImportServic
     }
 }
 
-public sealed record BindingUpdate(long ExpectedVersion, IReadOnlyList<string> FileIds, string? ActiveFileId);
+public sealed class BindingUpdate
+{
+    private string? _activeFileId;
+    public long ExpectedVersion { get; init; }
+    public required IReadOnlyList<string> FileIds { get; init; }
+    public string? ActiveFileId { get => _activeFileId; init { _activeFileId = value; HasActiveFileId = true; } }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool HasActiveFileId { get; private set; }
+    public string? SelectionIntent { get; init; }
+    public MediaSelection? Selection { get; init; }
+}
+public sealed record SelectionUpdate(long ExpectedVersion, string Kind, string? Id = null, long? ExpectedPlanVersion = null);
 public sealed record ResumeRequest(long ExpectedVersion);
 public sealed record CancelBatchRequest(IReadOnlyList<int>? Slots = null);

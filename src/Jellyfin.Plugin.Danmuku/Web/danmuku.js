@@ -3,7 +3,7 @@
     "use strict";
     // Kept identical in both entry points: old cached bootstrap can load this player alone.
     function ensureLayout(base) {
-        var version = 'm1-v5', contract = 'm1-density-v1';
+        var version = 'm2-v1', contract = 'm2-speed-v1';
         var registry = window.__danmukuDependencies || (window.__danmukuDependencies = Object.create(null));
         var key = base + '|' + version + '|' + contract;
         function valid() { return window.DanmukuLayout && window.DanmukuLayout.resourceVersion === version && window.DanmukuLayout.renderVersion === contract; }
@@ -206,6 +206,7 @@
         var prefs = {
             enabled: true,
             densityModeV2: "high",
+            scrollSpeed: 1,
             area: 75,
             opacity: 75,
             scale: 100,
@@ -214,6 +215,8 @@
             Object.assign(prefs, JSON.parse(localStorage.getItem(key) || "{}"));
         } catch (_) {}
         delete prefs.density;
+        if (typeof prefs.scrollSpeed !== 'number' || !Number.isFinite(prefs.scrollSpeed) || prefs.scrollSpeed < .5 || prefs.scrollSpeed > 2 ||
+            Math.abs(prefs.scrollSpeed * 10 - Math.round(prefs.scrollSpeed * 10)) > 1e-8) prefs.scrollSpeed = 1;
         if (!["low", "medium", "high", "overlap"].includes(prefs.densityModeV2))
             prefs.densityModeV2 = "high";
         if (![25, 50, 75, 100].includes(prefs.area)) prefs.area = 75;
@@ -354,6 +357,24 @@
             prefs.enabled = enabledInput.checked;
             save();
         });
+        var speedRow = document.createElement("label");
+        speedRow.className = "danmuku-speed";
+        var speedLabel = document.createElement("span");
+        speedLabel.textContent = "滚动速度"; speedRow.appendChild(speedLabel);
+        var speedInput = document.createElement("input");
+        speedInput.type = "range"; speedInput.min = "5"; speedInput.max = "20"; speedInput.step = "1";
+        speedInput.value = String(Math.round(prefs.scrollSpeed * 10));
+        speedInput.setAttribute("aria-label", "滚动速度");
+        var speedValue = document.createElement("output");
+        function showSpeed() {
+            speedValue.textContent = prefs.scrollSpeed.toFixed(1) + "×";
+            speedInput.setAttribute("aria-valuetext", speedValue.textContent);
+        }
+        showSpeed(); speedRow.append(speedInput, speedValue); panel.appendChild(speedRow);
+        listen(speedInput, "input", function () {
+            prefs.scrollSpeed = Number(speedInput.value) / 10;
+            showSpeed(); save("scrollSpeed");
+        });
         select("密度", "densityModeV2", [
             ["low", "低"],
             ["medium", "中"],
@@ -430,7 +451,7 @@
                         "Danmuku/Playback/" +
                             encodeURIComponent(media) +
                             "?playbackId=" +
-                            encodeURIComponent(self.id) + "&renderVersion=m1-density-v1",
+                            encodeURIComponent(self.id) + "&renderVersion=m2-speed-v1",
                         abort.signal,
                     ),
                 );
@@ -439,7 +460,7 @@
                 if (response.status !== 'Disabled') {
                     var contract = response.display, limits = contract && contract.limits;
                     var values = limits && ['low', 'medium', 'high', 'overlap'].map(function (name) { return limits[name]; });
-                    if (!contract || contract.renderVersion !== 'm1-density-v1' || !values ||
+                    if (!contract || contract.renderVersion !== 'm2-speed-v1' || !values ||
                         values.some(function (value, i) { return !Number.isInteger(value) || value < 1 || value > 600 || (i > 0 && value < values[i - 1]); }))
                         throw Error('RenderContractMismatch');
                     display = limits;
@@ -528,11 +549,11 @@
             return operation;
         }
         function makeLayout() {
-            var nextKey = [self.id, width, height, prefs.area, prefs.scale, prefs.densityModeV2, JSON.stringify(display)].join('|');
+            var nextKey = [self.id, width, height, prefs.area, prefs.scale, prefs.densityModeV2, prefs.scrollSpeed, JSON.stringify(display)].join('|');
             if (nextKey === layoutKey && layout) return;
             layoutKey = nextKey;
             layout = window.DanmukuLayout.create(items, { width: width, height: height, area: prefs.area,
-                mode: prefs.densityModeV2, limit: display[prefs.densityModeV2] });
+                mode: prefs.densityModeV2, scrollSpeed: prefs.scrollSpeed, limit: display[prefs.densityModeV2] });
             if (!sizes || sizes.length !== items.length * 4) {
                 sizes = new Float64Array(items.length * 4); measured = 0;
             }

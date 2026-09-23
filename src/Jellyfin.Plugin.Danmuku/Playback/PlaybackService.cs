@@ -11,7 +11,7 @@ public sealed record PlaybackIdentity(string UserId, string SessionHash, string 
 public sealed record RenderLimits(int Low, int Medium, int High, int Overlap);
 public sealed record PlaybackDisplay(string RenderVersion, RenderLimits Limits);
 public sealed record PlaybackPayload(string Status, string MediaId, string? FileId, string AlgorithmVersion, int LoadLimit,
-    int SelectedCount, PlaybackDisplay Display, long ExpiresAtUtcMs, IReadOnlyList<PlaybackComment> Items);
+    int SelectedCount, PlaybackDisplay Display, long ExpiresAtUtcMs, IReadOnlyList<PlaybackComment> Items, string SourceKind = "file", string? PlanId = null, long? PlanVersion = null, long? CandidateCount = null, long? ScannedCandidates = null);
 public sealed record PlaybackBudgets(long Bytes = 256L * 1024 * 1024, int Collections = 128, int Requests = 100000);
 public interface IPlaybackSessionLookup { Task<bool> IsActiveAsync(string userId, string sessionHash); }
 
@@ -19,7 +19,7 @@ public interface IPlaybackSessionLookup { Task<bool> IsActiveAsync(string userId
 public sealed class PlaybackService(ISqliteConnectionFactory factory, ISqliteWriteCoordinator writes, DanmukuDataPaths paths,
     TimeProvider clock, IPlaybackSessionLookup sessions, PlaybackBudgets budgets) : IDisposable
 {
-    public const string RenderVersion = "m1-density-v1";
+    public const string RenderVersion = "m2-speed-v1";
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Dictionary<string, CacheEntry> _live = new(StringComparer.Ordinal);
     private bool _initialized;
@@ -73,20 +73,25 @@ public sealed class PlaybackService(ISqliteConnectionFactory factory, ISqliteWri
                     using var t = c.BeginTransaction();
                     if (Long(c, t, "SELECT COUNT(*) FROM PlaybackRequests") >= budgets.Requests) throw Capacity();
                     var file = Text(c, t, "SELECT f.FileId FROM MediaState m JOIN Files f ON f.FileId=m.ActiveFileId WHERE m.MediaId=$media AND m.IsDeactivated=0 AND f.Status='Published'", ("$media", identity.MediaId));
+                    var planId = Text(c, t, "SELECT ActivePlanId FROM MediaState WHERE MediaId=$media AND IsDeactivated=0", ("$media", identity.MediaId));
+                    var plan = planId is null ? null : CombinePlanService.Read(c, t, identity.MediaId, planId);
                     var limit = config.LoadLimit(identity.DurationMs);
-                    var items = file is null ? Array.Empty<PlaybackComment>() : PlaybackSelector.Select(c, t, identity.MediaId, file, identity.DurationMs, limit);
+                    var combined = plan is null ? null : CombinePlaybackSelector.Select(c, t, plan, identity.DurationMs, limit, token);
+                    var items = combined?.Items ?? (file is null ? Array.Empty<PlaybackComment>() : PlaybackSelector.Select(c, t, identity.MediaId, file, identity.DurationMs, limit));
+                    var algorithm = plan is null ? PlaybackSelector.Algorithm : CombinePlaybackSelector.Algorithm;
+                    var sourceKind = plan is not null ? "plan" : file is not null ? "file" : "disabled";
                     var created = clock.GetUtcNow().ToUnixTimeMilliseconds();
                     expiry = created + 600000;
-                    var payload = new PlaybackPayload(file is null ? "Empty" : "Ready", identity.MediaId, file, PlaybackSelector.Algorithm, limit, items.Count,
-                        new(RenderVersion, new(config.LowRenderLimit, config.MediumRenderLimit, config.HighRenderLimit, config.OverlapRenderLimit)), expiry, items);
+                    var payload = new PlaybackPayload(items.Count == 0 ? "Empty" : "Ready", identity.MediaId, file, algorithm, limit, items.Count,
+                        new(RenderVersion, new(config.LowRenderLimit, config.MediumRenderLimit, config.HighRenderLimit, config.OverlapRenderLimit)), expiry, items, sourceKind, plan?.PlanId, plan?.Version, combined?.CandidateCount, combined?.ScannedCandidates);
                     await using (var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 65536, FileOptions.Asynchronous))
                         await JsonSerializer.SerializeAsync(output, payload, Json, token).ConfigureAwait(false);
                     if (new FileInfo(path).Length > available) throw Capacity();
                     Execute(c, t, """
-                        INSERT INTO PlaybackRequests(PlaybackId,SessionHash,UserId,MediaId,FileId,AlgorithmVersion,LoadLimit,ConfigSnapshot,Status,CreatedAtUtcMs,ExpiresAtUtcMs)
-                        VALUES($id,$session,$user,$media,$file,$algorithm,$limit,$config,'Active',$now,$expires)
+                        INSERT INTO PlaybackRequests(PlaybackId,SessionHash,UserId,MediaId,FileId,AlgorithmVersion,LoadLimit,ConfigSnapshot,Status,CreatedAtUtcMs,ExpiresAtUtcMs,SourceKind,PlanId,PlanVersion)
+                        VALUES($id,$session,$user,$media,$file,$algorithm,$limit,$config,'Active',$now,$expires,$kind,$plan,$planVersion)
                         """, ("$id", id), ("$session", identity.SessionHash), ("$user", identity.UserId), ("$media", identity.MediaId), ("$file", file),
-                        ("$algorithm", PlaybackSelector.Algorithm), ("$limit", limit), ("$config", JsonSerializer.Serialize(payload.Display, Json)), ("$now", created), ("$expires", expiry));
+                        ("$algorithm", algorithm), ("$kind", sourceKind), ("$plan", plan?.PlanId), ("$planVersion", plan?.Version), ("$limit", limit), ("$config", JsonSerializer.Serialize(payload.Display, Json)), ("$now", created), ("$expires", expiry));
                     t.Commit();
                 }, ct).ConfigureAwait(false);
                 _live.Add(id, new(path, new FileInfo(path).Length, expiry));

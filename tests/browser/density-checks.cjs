@@ -18,6 +18,17 @@ async function checks({ page, play, leave, dir, engine, api, plugin }) {
     await play(page);
     assert.equal(await page.locator('select[aria-label="密度"]').inputValue(), 'high');
     await page.locator('video').first().evaluate(v => v.pause());
+    result.speed = [];
+    for (const speed of [.5, 1, 1.3, 2, .5, 1]) {
+        const state = await page.evaluate(speed => measureDensityOperation('scrollSpeed', () => {
+            const input = document.querySelector('input[aria-label="滚动速度"]');
+            input.value = String(Math.round(speed * 10)); input.dispatchEvent(new Event('input'));
+        }), speed);
+        assert.equal(state.phase, 'committed');
+        assert(state.layoutKey.includes('|' + speed + '|'));
+        assert.equal(await page.locator('input[aria-label="滚动速度"]').getAttribute('aria-valuetext'), speed.toFixed(1) + '×');
+        result.speed.push(state);
+    }
     // Native subtitles remain separate from Canvas; browser cue state plus screenshots.
     result.subtitles = await page.evaluate(async () => {
         const v = document.querySelector('video');

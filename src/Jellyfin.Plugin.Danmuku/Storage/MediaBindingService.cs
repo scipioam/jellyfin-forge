@@ -29,7 +29,11 @@ public sealed class JellyfinMediaPresenceLookup(ILibraryManager library) : IMedi
 }
 
 public sealed record MediaBindingSnapshot(string MediaId, long Version, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? ActiveFileId, bool IsDeactivated,
-    IReadOnlyList<string> FileIds, string CheckStatus);
+    IReadOnlyList<string> FileIds, string CheckStatus, string? ActivePlanId = null)
+{
+    public MediaSelection Selection => ActivePlanId is not null ? new("plan", ActivePlanId)
+        : ActiveFileId is not null ? new("file", ActiveFileId) : new(IsDeactivated ? "disabled" : "none");
+}
 
 public sealed record BindingCheckJob(string JobId, string Status, long Processed, long Missing, long Failed);
 
@@ -77,6 +81,8 @@ public sealed class MediaBindingService(ISqliteConnectionFactory factory, ISqlit
             using var t = c.BeginTransaction();
             var before = Read(c, t, mediaId);
             RequireVersion(c, t, mediaId, expectedVersion);
+            if (before.ActivePlanId is not null)
+                throw new ImportOperationException("SelectionFormatConflict", 409, "Refresh to use plan-aware binding controls.");
             if (presence != MediaPresence.Exists && (activeFileId is not null || fileIds.Except(before.FileIds).Any()))
                 throw new ImportOperationException("MediaUnavailable", presence == MediaPresence.Missing ? 404 : 503, "Cannot bind or activate unavailable media.");
             foreach (var id in fileIds)
@@ -99,6 +105,84 @@ public sealed class MediaBindingService(ISqliteConnectionFactory factory, ISqlit
         }, ct).ConfigureAwait(false);
     }
 
+    public async Task<MediaBindingSnapshot> UpdateSelectionAsync(string mediaId, long expectedVersion,
+        MediaSelection selection, CancellationToken ct = default)
+    {
+        var presence = await CheckAsync(mediaId, ct).ConfigureAwait(false);
+        return await writes.EnqueueAsync((c, token) =>
+        {
+            using var t = c.BeginTransaction();
+            RequireVersion(c, t, mediaId, expectedVersion);
+            var state = Read(c, t, mediaId);
+            ApplySelection(c, t, mediaId, state.FileIds, selection, presence);
+            Execute(c, t, "UPDATE MediaState SET Version=Version+1 WHERE MediaId=$media", ("$media", mediaId));
+            var result = Read(c, t, mediaId);
+            token.ThrowIfCancellationRequested();
+            t.Commit();
+            return Task.FromResult(result);
+        }, ct).ConfigureAwait(false);
+    }
+
+    public async Task<MediaBindingSnapshot> UpdateBindingsAsync(string mediaId, long expectedVersion,
+        IReadOnlyList<string> fileIds, string selectionIntent, MediaSelection? selection, CancellationToken ct = default)
+    {
+        if (fileIds is null || fileIds.Distinct(StringComparer.Ordinal).Count() != fileIds.Count ||
+            selectionIntent is not ("preserve" or "set") || (selectionIntent == "set") != (selection is not null))
+            throw new ImportOperationException("InvalidBindings", 422, "Specify unique bindings and preserve or set selection intent.");
+        fileIds = fileIds.ToArray();
+        var presence = await CheckAsync(mediaId, ct).ConfigureAwait(false);
+        return await writes.EnqueueAsync((c, token) =>
+        {
+            using var t = c.BeginTransaction();
+            RequireVersion(c, t, mediaId, expectedVersion);
+            var before = Read(c, t, mediaId);
+            if (presence != MediaPresence.Exists && fileIds.Except(before.FileIds).Any())
+                throw new ImportOperationException("MediaUnavailable", presence == MediaPresence.Missing ? 404 : 503, "Cannot add bindings to unavailable media.");
+            if (selectionIntent == "preserve" && before.ActiveFileId is not null && !fileIds.Contains(before.ActiveFileId))
+                throw new ImportOperationException("ReplacementRequired", 422, "Choose a replacement or disable before removing the active file.");
+            foreach (var id in fileIds)
+            {
+                if (Text(c, t, "SELECT Status FROM Files WHERE FileId=$id", ("$id", id)) != "Published")
+                    throw new ImportOperationException("FileUnavailable", 409, "Only published files can be bound.");
+                Execute(c, t, "INSERT OR IGNORE INTO MediaBindings VALUES($media,$file,$now)",
+                    ("$media", mediaId), ("$file", id), ("$now", clock.GetUtcNow().ToUnixTimeMilliseconds()));
+            }
+            if (selection is not null) ApplySelection(c, t, mediaId, fileIds, selection, presence);
+            Execute(c, t, "UPDATE MediaState SET Version=Version+1 WHERE MediaId=$media", ("$media", mediaId));
+            foreach (var id in before.FileIds.Except(fileIds))
+                Execute(c, t, "DELETE FROM MediaBindings WHERE MediaId=$media AND FileId=$file", ("$media", mediaId), ("$file", id));
+            var result = Read(c, t, mediaId);
+            token.ThrowIfCancellationRequested();
+            t.Commit();
+            return Task.FromResult(result);
+        }, ct).ConfigureAwait(false);
+    }
+
+    internal static void ApplySelection(SqliteConnection c, SqliteTransaction t, string mediaId,
+        IReadOnlyList<string> fileIds, MediaSelection selection, MediaPresence presence)
+    {
+        if (selection.Kind is not ("file" or "plan" or "disabled") ||
+            (selection.Kind == "disabled" ? selection.Id is not null || selection.ExpectedPlanVersion is not null : string.IsNullOrWhiteSpace(selection.Id)) ||
+            (selection.Kind == "file" && selection.ExpectedPlanVersion is not null))
+            throw new ImportOperationException("InvalidSelection", 422, "Invalid selection fields.");
+        if (presence != MediaPresence.Exists && selection.Kind != "disabled")
+            throw new ImportOperationException("MediaUnavailable", presence == MediaPresence.Missing ? 404 : 503, "Unavailable media can only be disabled.");
+        if (selection.Kind == "file" && (!fileIds.Contains(selection.Id!) ||
+            Text(c, t, "SELECT Status FROM Files WHERE FileId=$id", ("$id", selection.Id)) != "Published"))
+            throw new ImportOperationException("FileUnavailable", 409, "Select a published bound file.");
+        if (selection.Kind == "plan")
+        {
+            var plan = CombinePlanService.Read(c, t, mediaId, selection.Id!);
+            CombinePlanService.RequirePlanVersion(plan.Version, selection.ExpectedPlanVersion);
+            foreach (var row in plan.Segments)
+                if (Text(c, t, "SELECT Status FROM Files WHERE FileId=$id", ("$id", row.FileId)) != "Published")
+                    throw new ImportOperationException("SourceUnavailable", 409, "Every source must be published.");
+        }
+        Execute(c, t, "UPDATE MediaState SET ActiveFileId=$file,ActivePlanId=$plan,IsDeactivated=$off WHERE MediaId=$media",
+            ("$file", selection.Kind == "file" ? selection.Id : null), ("$plan", selection.Kind == "plan" ? selection.Id : null),
+            ("$off", selection.Kind == "disabled" ? 1 : 0), ("$media", mediaId));
+    }
+
     internal static void RequireVersion(SqliteConnection c, SqliteTransaction t, string mediaId, long expected)
     {
         if (expected < 0 || Long(c, t, "SELECT COALESCE((SELECT Version FROM MediaState WHERE MediaId=$id),0)", ("$id", mediaId)) != expected)
@@ -110,9 +194,9 @@ public sealed class MediaBindingService(ISqliteConnectionFactory factory, ISqlit
         var files = new List<string>();
         using (var cmd = Command(c, t, "SELECT FileId FROM MediaBindings WHERE MediaId=$id ORDER BY FileId", ("$id", mediaId)))
         using (var r = cmd.ExecuteReader()) while (r.Read()) files.Add(r.GetString(0));
-        using var command = Command(c, t, "SELECT Version,ActiveFileId,IsDeactivated,CheckStatus FROM MediaState WHERE MediaId=$id", ("$id", mediaId));
+        using var command = Command(c, t, "SELECT Version,ActiveFileId,IsDeactivated,CheckStatus,ActivePlanId FROM MediaState WHERE MediaId=$id", ("$id", mediaId));
         using var reader = command.ExecuteReader();
-        return reader.Read() ? new(mediaId, reader.GetInt64(0), reader.IsDBNull(1) ? null : reader.GetString(1), reader.GetBoolean(2), files, reader.GetString(3))
+        return reader.Read() ? new(mediaId, reader.GetInt64(0), reader.IsDBNull(1) ? null : reader.GetString(1), reader.GetBoolean(2), files, reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetString(4))
             : new(mediaId, 0, null, false, files, "Unchecked");
     }
 
@@ -152,7 +236,7 @@ public sealed class MediaBindingService(ISqliteConnectionFactory factory, ISqlit
                 ct.ThrowIfCancellationRequested();
                 string? media;
                 using (var c = factory.CreateOpenConnection())
-                    media = Text(c, null, "SELECT MediaId FROM MediaBindings WHERE MediaId>$cursor ORDER BY MediaId LIMIT 1", ("$cursor", cursor));
+                    media = Text(c, null, "SELECT MediaId FROM (SELECT MediaId FROM MediaBindings UNION SELECT MediaId FROM CombinePlans) WHERE MediaId>$cursor ORDER BY MediaId LIMIT 1", ("$cursor", cursor));
                 if (media is null) break;
                 cursor = media;
                 var presence = await CheckAsync(media, ct).ConfigureAwait(false);

@@ -17,8 +17,8 @@ public sealed class ManagementQueries(ISqliteConnectionFactory factory, IPublish
     public Page<Dictionary<string, object?>> Files(string? search, bool unbound, int start, int limit)
     {
         var result = Query(
-        "Files f", "f.FileId,f.OriginalFileName,f.StoredFileName,f.DisplayName,f.Format,f.ContentHash,f.ImportedAtUtcMs,f.CommentCount,f.LastCommentTimeMs,f.ParseDataVersion,f.Status,(SELECT COUNT(*) FROM MediaBindings b WHERE b.FileId=f.FileId) AS BindingCount",
-        "($search IS NULL OR instr(lower(f.StoredFileName),lower($search))>0) AND ($unbound=0 OR NOT EXISTS(SELECT 1 FROM MediaBindings b WHERE b.FileId=f.FileId))",
+        "Files f", "f.FileId,f.OriginalFileName,f.StoredFileName,f.DisplayName,f.Format,f.ContentHash,f.ImportedAtUtcMs,f.CommentCount,f.LastCommentTimeMs,f.ParseDataVersion,f.Status,(SELECT COUNT(*) FROM MediaBindings b WHERE b.FileId=f.FileId) AS BindingCount,(SELECT COUNT(DISTINCT s.PlanId) FROM CombineSegments s WHERE s.FileId=f.FileId) AS PlanReferenceCount",
+        "($search IS NULL OR instr(lower(f.StoredFileName),lower($search))>0) AND ($unbound=0 OR (NOT EXISTS(SELECT 1 FROM MediaBindings b WHERE b.FileId=f.FileId) AND NOT EXISTS(SELECT 1 FROM CombineSegments s WHERE s.FileId=f.FileId)))",
         "f.ImportedAtUtcMs DESC,f.FileId", start, limit, ("$search", search), ("$unbound", unbound ? 1 : 0));
         foreach (var item in result.Items)
         {
@@ -42,6 +42,20 @@ public sealed class ManagementQueries(ISqliteConnectionFactory factory, IPublish
         _ = File(id);
         return Query("MediaBindings b JOIN MediaState m ON m.MediaId=b.MediaId", "b.MediaId,b.BoundAtUtcMs,m.ActiveFileId,m.Version,m.CheckStatus",
             "b.FileId=$id", "b.MediaId", start, limit, ("$id", id));
+    }
+
+    public Page<Dictionary<string, object?>> References(string id, int start, int limit)
+    {
+        _ = File(id);
+        return Query("""
+            (SELECT 'file' AS Kind,b.MediaId,NULL AS PlanId,NULL AS Name,0 AS SegmentCount
+                FROM MediaBindings b WHERE b.FileId=$id
+             UNION ALL
+             SELECT 'plan',p.MediaId,p.PlanId,p.Name,COUNT(*) FROM CombineSegments s
+                JOIN CombinePlans p ON p.PlanId=s.PlanId WHERE s.FileId=$id GROUP BY p.PlanId) refs
+             LEFT JOIN MediaState m ON m.MediaId=refs.MediaId
+            """, "refs.Kind,refs.MediaId,refs.PlanId,refs.Name,refs.SegmentCount,m.CheckStatus,m.Version",
+            "1=1", "refs.MediaId,refs.Kind,refs.PlanId", start, limit, ("$id", id));
     }
 
     public Page<Dictionary<string, object?>> Imports(string? batch, int start, int limit) => Query("ImportTasks", TaskProjection,
@@ -69,8 +83,8 @@ public sealed class ManagementQueries(ISqliteConnectionFactory factory, IPublish
         return result;
     }
 
-    public Page<Dictionary<string, object?>> AbnormalMedia(int start, int limit) => Query("MediaState", "MediaId,ActiveFileId,IsDeactivated,Version,CheckStatus,CheckedAtUtcMs",
-        "CheckStatus IN ('Missing','CheckFailed') AND EXISTS(SELECT 1 FROM MediaBindings b WHERE b.MediaId=MediaState.MediaId)", "MediaId", start, limit);
+    public Page<Dictionary<string, object?>> AbnormalMedia(int start, int limit) => Query("MediaState", "MediaId,ActiveFileId,ActivePlanId,IsDeactivated,Version,CheckStatus,CheckedAtUtcMs",
+        "CheckStatus IN ('Missing','CheckFailed') AND (EXISTS(SELECT 1 FROM MediaBindings b WHERE b.MediaId=MediaState.MediaId) OR EXISTS(SELECT 1 FROM CombinePlans p WHERE p.MediaId=MediaState.MediaId))", "MediaId", start, limit);
 
     private const string TaskProjection = "TaskId,BatchId,Slot,Status,Stage,StagePercent,TotalComments,ProcessedComments,NormalComments,AbnormalComments,ImportedComments,SkippedComments,CreatedAtUtcMs,FinishedAtUtcMs,DeadlineAtUtcMs,ErrorCode,ResultCode,FileId,(SELECT Operation FROM ImportBatches b WHERE b.BatchId=ImportTasks.BatchId) AS Operation,(SELECT MediaId FROM ImportBatches b WHERE b.BatchId=ImportTasks.BatchId) AS MediaId,(SELECT OriginalFileName FROM ImportSlots s WHERE s.BatchId=ImportTasks.BatchId AND s.Slot=ImportTasks.Slot) AS OriginalFileName";
 

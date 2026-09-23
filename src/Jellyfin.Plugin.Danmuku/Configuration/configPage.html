@@ -46,7 +46,7 @@
                             ><input
                                 id="dm-unbound"
                                 type="checkbox"
-                            />仅未绑定</label
+                            />仅未引用</label
                         >
                         <button type="button" id="dm-search-files">搜索</button>
                         <div id="dm-files-list"></div>
@@ -189,6 +189,12 @@
                     #DanmukuConfigPage label { max-width: 100%; box-sizing: border-box; }
                     #DanmukuConfigPage .dm-picker { padding: 10px; }
                 }
+                #DanmukuConfigPage .dm-time { width: 125px; max-width: none; font-variant-numeric: tabular-nums; }
+                #DanmukuConfigPage #dm-plan-editor pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+                #DanmukuConfigPage #dm-plan-editor { border-left: 3px solid #00a4dc; padding: 16px; }
+                #DanmukuConfigPage input[type="checkbox"] { accent-color: #00a4dc; width: 18px; height: 18px; vertical-align: middle; }
+                #DanmukuConfigPage :is(input,select,button):focus-visible { outline: 2px solid #00a4dc; outline-offset: 3px; }
+                #DanmukuConfigPage :disabled { opacity: .55; cursor: not-allowed; }
             </style>
             <script>
                 (function () {
@@ -201,7 +207,7 @@
                         timer = null,
                         alive = false,
                         tab = "media",
-                        taskStart = 0;
+                        taskStart = 0, editor = null, editorSerial = 0;
                     function $(id) {
                         return page.querySelector("#" + id);
                     }
@@ -226,11 +232,12 @@
                             JSON.stringify(ApiClient.accessToken())
                         );
                     }
-                    async function req(route, method, body) {
+                    async function req(route, method, body, signal) {
                         var r = await fetch(
                             ApiClient.getUrl("Danmuku/" + route),
                             {
                                 method: method || "GET",
+                                signal: signal,
                                 headers: {
                                     Authorization: header(),
                                     "Content-Type": "application/json",
@@ -307,6 +314,7 @@
                     }
                     function operationName(value) { return { import: "仅导入文件", append: "追加并绑定", replace: "替换绑定" }[value] || value; }
                     function switchTab(next) {
+                        if (next !== tab && !closeEditor()) return;
                         tab = next;
                         page.querySelectorAll("[data-tab]").forEach(function (b) { if (b.dataset.tab === next) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current"); });
                         page.querySelectorAll("[data-section]").forEach(
@@ -499,12 +507,13 @@
                                         : "进入",
                                     async function () {
                                         if (item.canBind || abnormal) {
+                                            if (!closeEditor()) return;
                                             selected = item.id || item.mediaId; selectedName = item.name || selected;
                                             await bindings();
                                         } else await media(0, item.id, false);
                                     },
                                     r,
-                                );
+                                ).dataset.mediaId = item.id || item.mediaId;
                             }, ["媒体名称", "类型 / 状态", "操作"],
                         );
                         if (parent)
@@ -516,43 +525,246 @@
                                 $("dm-media-list"),
                             );
                     }
-                    async function update(ids, active, context) {
+                    async function update(ids, active, context, preserve) {
+                        if (!closeEditor()) return;
                         context = context || state;
                         if (!context || context.mediaId !== selected) throw new Error("媒体已切换，请重新选择操作");
                         var mediaId = context.mediaId;
-                        try { await req("Media/" + mediaId + "/Bindings", "PUT", { expectedVersion: context.version, fileIds: ids, activeFileId: active }); }
+                        try { await req("Media/" + mediaId + "/Bindings", "PUT", { expectedVersion: context.version, fileIds: ids, selectionIntent: preserve ? "preserve" : "set", ...(preserve ? {} : { selection: active ? { kind: "file", id: active } : { kind: "disabled" } }) }); }
                         catch (error) { if (selected === mediaId) await bindings(); throw error; }
                         if (selected === mediaId) await bindings();
                     }
                     async function bindings() {
                         var mediaId = selected, generation = ++bindingGeneration; ++pickerGeneration;
                         var host = $("dm-binding"); host.replaceChildren(); state = null;
-                        var snapshot = await req("Media/" + mediaId + "/Bindings");
+                        var planData = await req("Media/" + mediaId + "/CombinePlans"), snapshot = planData.state;
                         var files = await Promise.all(snapshot.fileIds.map(function (id) { return req("Files/" + encodeURIComponent(id)); }));
                         if (!alive || selected !== mediaId || generation !== bindingGeneration) return;
                         state = snapshot;
                         var title = document.createElement("h3"); title.className = "dm-binding-title"; title.textContent = selectedName || mediaId; host.appendChild(title);
-                        line(host, "解除绑定保留文件；替换仅影响本媒体。绑定已有文件后，可选择设为生效。").className = "dm-help";
-                        button("添加已有文件", function () { return picker(0, "", snapshot); }, host);
-                        button("上传并绑定（最多 10 个）", function () { chooseUpload(false, null, snapshot); }, host).className = "dm-primary";
-                        button("停用本媒体弹幕", function () { return update(snapshot.fileIds, null, snapshot); }, host).disabled = !snapshot.activeFileId;
+                        var activePlan = planData.items.find(function (p) { return p.planId === snapshot.activePlanId; });
+                        line(host, "当前：" + (activePlan ? "合并方案：" + activePlan.name : snapshot.activeFileId ? "单文件：" + (files.find(function (f) { return f.fileId === snapshot.activeFileId; }) || {}).storedFileName : snapshot.isDeactivated ? "已停用" : "未选择") + " · 时长：" + (planData.durationMs == null ? "未知" : formatTime(planData.durationMs)));
+                        line(host, "变更在下次播放生效。解除绑定保留文件；替换仅影响单文件绑定，不改变方案来源。").className = "dm-help";
+                        line(host, "媒体检查：" + snapshot.checkStatus);
+                        var unavailable = snapshot.checkStatus !== "Exists";
+                        button("添加已有文件", function () { return picker(0, "", snapshot); }, host).disabled = unavailable;
+                        button("上传并绑定（最多 10 个）", function () { chooseUpload(false, null, snapshot); }, host).disabled = unavailable;
+                        button("停用本媒体弹幕", function () { return update(snapshot.fileIds, null, snapshot); }, host).disabled = !snapshot.activeFileId && !snapshot.activePlanId;
                         var pickerHost = document.createElement("div"); pickerHost.id = "dm-file-picker"; host.appendChild(pickerHost);
                         var body = table(host, ["文件", "条数", "状态", "操作"], "已绑定文件");
                         files.forEach(function (file) {
                             var id = file.fileId, r = row(body); cell(r, 0, file.storedFileName); cell(r, 1, file.commentCount);
                             cell(r, 2, id === snapshot.activeFileId ? "生效中" : "未生效");
-                            if (id !== snapshot.activeFileId) button("设为生效", function () { return update(snapshot.fileIds, id, snapshot); }, r);
+                            if (id !== snapshot.activeFileId) button("设为生效", function () { return update(snapshot.fileIds, id, snapshot); }, r).disabled = unavailable;
                             var actions = more(r);
                             button("解除绑定", function () {
                                 if (confirm("解除本媒体绑定；文件和其他媒体不受影响。解除生效文件会停用本媒体弹幕。"))
-                                    return update(snapshot.fileIds.filter(function (x) { return x !== id; }), snapshot.activeFileId === id ? null : snapshot.activeFileId, snapshot);
+                                    return update(snapshot.fileIds.filter(function (x) { return x !== id; }), snapshot.activeFileId === id ? null : snapshot.activeFileId, snapshot, snapshot.activeFileId !== id);
                             }, actions);
                             button("替换", function () {
                                 if (confirm("选择新文件替换本媒体绑定；完整发布后生效，旧文件和其他媒体保留。")) chooseUpload(true, id, snapshot);
                             }, actions);
                         });
-                        if (!files.length) line(host, "尚未绑定文件。添加已有文件或上传并绑定。");
+                        if (!files.length) line(host, "尚未绑定单文件；方案来源不需要单独绑定。");
+                        renderPlans(host, planData, snapshot);
                     }
+                    function formatTime(ms) {
+                        var seconds = Math.floor(ms / 1000), fraction = ms % 1000;
+                        return Math.floor(seconds / 60).toString().padStart(2, '0') + ':' + (seconds % 60).toString().padStart(2, '0') + (fraction ? '.' + fraction.toString().padStart(3, '0') : '');
+                    }
+                    function parseTime(value) {
+                        var m = /^(\d+):([0-5]\d)(?::([0-5]\d))?(?:\.(\d{1,3}))?$/.exec(value.trim());
+                        if (!m || (m[3] && Number(m[2]) > 59)) throw Error('时间格式须为 MM:SS[.fff] 或 HH:MM:SS[.fff]');
+                        var seconds = BigInt(m[1]) * (m[3] ? 3600n : 60n) + BigInt(m[2]) * (m[3] ? 60n : 1n) + BigInt(m[3] || 0);
+                        var ms = seconds * 1000n + BigInt((m[4] || '').padEnd(3, '0') || '0');
+                        if (ms > BigInt(Number.MAX_SAFE_INTEGER)) throw Error('时间超过可精确表示范围');
+                        return Number(ms);
+                    }
+                    function cancelPreview() {
+                        if (!editor) return;
+                        clearTimeout(editor.timer); if (editor.abort) editor.abort.abort(); ++editor.serial;
+                    }
+                    function closeEditor() {
+                        if (editor && editor.dirty && !confirm('有未保存修改，是否放弃？')) return false;
+                        cancelPreview(); editor = null; ++editorSerial;
+                        var host = $('dm-plan-editor'); if (host) host.remove();
+                        return true;
+                    }
+                    function editorUnload(e) { if (alive && editor && editor.dirty) { e.preventDefault(); e.returnValue = ''; } }
+                    function editorNavigate(e) {
+                        if (!alive || !editor || !editor.dirty || !e.target.closest('a[href]')) return;
+                        if (!closeEditor()) { e.preventDefault(); e.stopImmediatePropagation(); }
+                    }
+                    function renderPlans(host, data, snapshot) {
+                        var heading = document.createElement('h3'); heading.textContent = '合并方案'; host.appendChild(heading);
+                        button('新建合并方案', function () { return openEditor(null, data.defaultName, snapshot); }, host).disabled = snapshot.checkStatus !== 'Exists' || data.items.length >= 20;
+                        var body = table(host, ['名称', '片段', '状态', '操作'], '合并方案');
+                        data.items.forEach(function (p) {
+                            var r = row(body); cell(r, 0, p.name); cell(r, 1, p.segments.length); cell(r, 2, p.planId === snapshot.activePlanId ? '生效中' : '未生效');
+                            button('编辑方案', function () { return openEditor(p, p.name, snapshot); }, r).disabled = snapshot.checkStatus !== 'Exists';
+                            button('启用方案', async function () {
+                                if (!closeEditor()) return;
+                                await req('Media/' + snapshot.mediaId + '/Selection', 'PUT', { expectedVersion: snapshot.version, kind: 'plan', id: p.planId, expectedPlanVersion: p.version });
+                                if (selected === snapshot.mediaId) await bindings();
+                            }, r).disabled = snapshot.checkStatus !== 'Exists';
+                            button('删除方案', function () {
+                                var area = r.lastElementChild;
+                                var prior = area.querySelector('.dm-plan-delete'); if (prior) prior.remove();
+                                var box = document.createElement('div'); box.className = 'dm-plan-delete'; area.appendChild(box);
+                                var replacement;
+                                if (snapshot.activePlanId === p.planId) {
+                                    line(box, '当前方案生效中，请明确选择删除后的状态：');
+                                    replacement = document.createElement('select'); replacement.setAttribute('aria-label', '删除后生效项');
+                                    var options = [{ label: '停用弹幕', selection: { kind: 'disabled' } }];
+                                    if (snapshot.checkStatus === 'Exists') {
+                                        snapshot.fileIds.forEach(function (id) { options.push({ label: '单文件：' + id, selection: { kind: 'file', id: id } }); });
+                                        data.items.filter(function (q) { return q.planId !== p.planId; }).forEach(function (q) { options.push({ label: '方案：' + q.name, selection: { kind: 'plan', id: q.planId, expectedPlanVersion: q.version } }); });
+                                    }
+                                    options.forEach(function (o, i) { var option = document.createElement('option'); option.value = i; option.textContent = o.label; replacement.appendChild(option); });
+                                    box.appendChild(replacement);
+                                }
+                                button('确认删除方案', async function () {
+                                    if (!confirm('仅删除方案，来源文件保留。是否继续？') || !closeEditor()) return;
+                                    var request = { expectedPlanVersion: p.version, expectedMediaVersion: snapshot.version };
+                                    if (replacement) request.replacement = options[Number(replacement.value)].selection;
+                                    await req('Media/' + snapshot.mediaId + '/CombinePlans/' + p.planId + '/Delete', 'POST', request);
+                                    if (selected === snapshot.mediaId) await bindings();
+                                }, box);
+                                button('取消删除', function () { box.remove(); }, box);
+                            }, more(r));
+                        });
+                    }
+                    async function openEditor(plan, name, snapshot) {
+                        if (!closeEditor()) return;
+                        var e = editor = { generation: ++editorSerial, media: snapshot.mediaId, mediaVersion: snapshot.version,
+                            id: plan ? plan.planId : crypto.randomUUID().replaceAll('-', ''), version: plan ? plan.version : null,
+                            name: name, dirty: !plan, serial: 0, rows: [], undo: null, saved: false };
+                        var rows = plan ? plan.segments : [];
+                        e.rows = await Promise.all(rows.map(async function (r) {
+                            var file = await req('Files/' + encodeURIComponent(r.fileId));
+                            return { fileId: r.fileId, name: file.storedFileName, start: formatTime(r.sourceStartMs), end: r.sourceEndMs == null ? '' : formatTime(r.sourceEndMs), tail: r.sourceEndMs == null, target: formatTime(r.targetStartMs) };
+                        }));
+                        if (editor !== e || selected !== e.media || !alive) return;
+                        var host = document.createElement('div'); host.id = 'dm-plan-editor'; host.className = 'dm-picker'; $('dm-binding').appendChild(host); e.host = host;
+                        var label = document.createElement('label'); label.textContent = '方案名称 ';
+                        var input = document.createElement('input'); input.value = name; input.setAttribute('aria-label', '方案名称');
+                        input.addEventListener('input', function () { e.name = input.value; e.dirty = true; }); label.appendChild(input); host.appendChild(label);
+                        e.nameInput = input;
+                        var searchLabel = document.createElement('label'); searchLabel.textContent = '来源文件搜索 ';
+                        var search = document.createElement('input'); search.type = 'search'; search.setAttribute('aria-label', '来源文件搜索'); searchLabel.appendChild(search); host.appendChild(searchLabel);
+                        button('查找来源文件', function () { return sourcePicker(e, 0, search.value); }, host);
+                        e.picker = document.createElement('div'); host.appendChild(e.picker);
+                        e.table = document.createElement('div'); host.appendChild(e.table);
+                        e.summary = line(host, ''); e.summary.setAttribute('role', 'status');
+                        e.error = line(host, ''); e.error.setAttribute('role', 'alert');
+                        e.save = button('保存方案', function () { return saveEditor(e, false); }, host);
+                        e.activate = button('保存并启用', function () { return saveEditor(e, true); }, host); e.activate.className = 'dm-primary';
+                        button('取消编辑', closeEditor, host);
+                        button('重新统计', function () { schedulePreview(e); }, host);
+                        renderSegments(e); schedulePreview(e);
+                    }
+                    async function sourcePicker(e, start, search) {
+                        var generation = e.pickSerial = (e.pickSerial || 0) + 1;
+                        var result = await req('Files?limit=50&startIndex=' + start + '&search=' + encodeURIComponent(search));
+                        if (editor !== e || generation !== e.pickSerial || !alive) return;
+                        paged(e.picker, result, start, function (next) { return sourcePicker(e, next, search); }, function (r, file) {
+                            cell(r, 0, file.storedFileName); cell(r, 1, file.commentCount);
+                            button('添加片段', function () {
+                                if (e.rows.length >= 50) throw Error("最多 50 行片段");
+                                e.rows.push({ fileId: file.fileId, name: file.storedFileName, start: '00:00', end: '', tail: true, target: '00:00' });
+                                editSegments(e); renderSegments(e);
+                            }, r).disabled = file.status !== 'Published' || e.rows.length >= 50;
+                        }, ['文件', '条数', '操作']);
+                    }
+                    function editSegments(e, preserveUndo) {
+                        if (editor !== e) return;
+                        e.dirty = true; if (e.error) e.error.textContent = ''; if (!preserveUndo) e.undo = null;
+                        if (e.undoButton) e.undoButton.disabled = !e.undo;
+                        schedulePreview(e);
+                    }
+                    function renderSegments(e) {
+                        e.table.replaceChildren();
+                        var body = table(e.table, ['文件', '源开始', '源结束', '视频起点', '映射与条数', '操作'], '合并片段时间表');
+                        e.rows.forEach(function (r, i) {
+                            var tr = row(body); cell(tr, 0, r.name);
+                            ['start', 'end', 'target'].forEach(function (key, n) {
+                                var input = document.createElement('input'); input.type = 'text'; input.value = r[key]; input.className = 'dm-time'; input.disabled = key === 'end' && r.tail;
+                                input.setAttribute('aria-label', '片段 ' + (i + 1) + ' ' + ({ start: '源开始', end: '源结束', target: '视频起点' })[key]);
+                                input.addEventListener('input', function () { r[key] = input.value; editSegments(e); }); tr.children[n + 1].appendChild(input);
+                                if (key === 'end') {
+                                    var label = document.createElement('label'), tail = document.createElement('input'); tail.type = 'checkbox'; tail.checked = r.tail;
+                                    tail.addEventListener('change', function () { r.tail = tail.checked; input.disabled = r.tail; if (!r.tail && !r.end) { r.end = r.start; input.value = r.end; } editSegments(e); });
+                                    label.append(tail, document.createTextNode('到文件末尾')); tr.children[n + 1].appendChild(label);
+                                }
+                            });
+                            r.stats = tr.children[4]; r.stats.textContent = '计算中';
+                            button('上移', function () { [e.rows[i - 1], e.rows[i]] = [e.rows[i], e.rows[i - 1]]; editSegments(e); renderSegments(e); }, tr).disabled = i === 0;
+                            button('下移', function () { [e.rows[i + 1], e.rows[i]] = [e.rows[i], e.rows[i + 1]]; editSegments(e); renderSegments(e); }, tr).disabled = i === e.rows.length - 1;
+                            button('移除片段', function () { e.rows.splice(i, 1); editSegments(e); renderSegments(e); }, tr);
+                            button('将此范围应用到全部', function () {
+                                e.undo = e.rows.map(function (v) { return { start: v.start, end: v.end, tail: v.tail }; });
+                                e.rows.forEach(function (v) { v.start = r.start; v.end = r.end; v.tail = r.tail; });
+                                editSegments(e, true); renderSegments(e); e.error.textContent = '已同步 ' + e.rows.length + ' 行源范围，视频起点保持不变。';
+                            }, tr);
+                        });
+                        e.undoButton = button('撤销范围同步', function () {
+                            if (!e.undo) return; e.rows.forEach(function (r, i) { Object.assign(r, e.undo[i]); }); editSegments(e); renderSegments(e);
+                        }, e.table); e.undoButton.disabled = !e.undo;
+                    }
+                    function draftSegments(e) {
+                        return e.rows.map(function (r) { return { fileId: r.fileId, sourceStartMs: parseTime(r.start), sourceEndMs: r.tail ? null : parseTime(r.end), targetStartMs: parseTime(r.target) }; });
+                    }
+                    function schedulePreview(e) {
+                        if (editor !== e || !e.summary) return;
+                        cancelPreview(); e.valid = false; e.save.disabled = e.activate.disabled = true;
+                        e.summary.textContent = '计算中…'; e.rows.forEach(function (r) { if (r.stats) r.stats.textContent = '计算中'; });
+                        var serial = e.serial;
+                        e.timer = setTimeout(async function () {
+                            try {
+                                if (!e.rows.length) throw Error('请添加至少一个片段');
+                                e.abort = new AbortController();
+                                var result = await req('Media/' + e.media + '/CombinePlans/Preview', 'POST', { segments: draftSegments(e) }, e.abort.signal);
+                                if (!alive || editor !== e || e.serial !== serial || selected !== e.media) return;
+                                result.segments.forEach(function (r, i) {
+                                    e.rows[i].stats.textContent = r.count === 0 ? '无选中条目' : r.count + ' 条 · ' + formatTime(r.firstTargetMs) + (r.targetEndMs == null ? '；最后一条预计出现在 ' + formatTime(r.lastTargetMs) : ' → ' + formatTime(r.targetEndMs) + '（结束不含）');
+                                });
+                                e.summary.textContent = '合计 ' + result.totalCount + ' 条；超出视频时长 ' + result.beyondDurationCount + ' 条' + (result.durationUnknown ? '；视频时长未知，无法检查超时长条目' : '') + (result.totalCount === 0 ? '；全部为空，无法保存' : '');
+                                e.valid = result.totalCount > 0; e.save.disabled = e.activate.disabled = !e.valid || e.saving;
+                            } catch (error) {
+                                if (editor === e && e.serial === serial && error.name !== 'AbortError') e.summary.textContent = '统计失败：' + error.message + '。可修正输入或重新统计。';
+                            }
+                        }, 250);
+                    }
+                    async function saveEditor(e, activate) {
+                        if (editor !== e || !e.valid || e.saving) return;
+                        var segments = draftSegments(e), name = e.name, version = e.version;
+                        var request = { name: name, segments: segments, activate: activate, expectedMediaVersion: e.mediaVersion };
+                        if (version == null) request.planId = e.id; else request.expectedPlanVersion = version;
+                        cancelPreview(); e.saving = true; e.save.disabled = e.activate.disabled = true;
+                        // Keep the submitted draft stable while the request belongs to this editor generation.
+                        var controls = Array.from(e.host.querySelectorAll('input,button')); controls.forEach(function (c) { c.disabled = true; });
+                        try {
+                            await req('Media/' + e.media + '/CombinePlans' + (version == null ? '' : '/' + e.id), version == null ? 'POST' : 'PUT', request);
+                            if (editor !== e || selected !== e.media || !alive) return;
+                            e.dirty = false; closeEditor(); await bindings(); report('方案已保存' + (activate ? '并启用；下次播放生效' : '；生效选择保持不变'));
+                        } catch (error) {
+                            if (editor !== e || selected !== e.media || !alive) return;
+                            e.error.textContent = '保存失败或响应丢失：' + error.message + '。输入已保留；先核对服务端结果，不自动重试。';
+                            button('核对保存结果', async function () {
+                                var latest = await req('Media/' + e.media + '/CombinePlans/' + e.id);
+                                if (editor !== e) return;
+                                e.error.textContent = '服务端方案版本 ' + latest.plan.version + '，名称：' + latest.plan.name + '；请核对内容后关闭编辑并重新打开，不自动覆盖当前输入。';
+                                var detail = document.createElement('pre'); detail.textContent = JSON.stringify(latest.plan, null, 2); e.host.appendChild(detail);
+                            }, e.host);
+                            if (error.message.includes('PlanNameConflict')) {
+                                var latest = await req('Media/' + e.media + '/CombinePlans');
+                                if (editor === e) button('使用可用名称 ' + latest.defaultName, function () { e.name = latest.defaultName; e.nameInput.value = e.name; e.dirty = true; }, e.host);
+                            }
+                        } finally {
+                            if (editor === e) { e.saving = false; controls.forEach(function (c) { c.disabled = false; }); renderSegments(e); schedulePreview(e); }
+                        }
+                    }
+
                     async function picker(start, search, context) {
                         var host = $("dm-file-picker"), generation = ++pickerGeneration;
                         var result = await req("Files?startIndex=" + start + "&limit=50&search=" + encodeURIComponent(search));
@@ -568,7 +780,7 @@
                             cell(r, 0, file.storedFileName); cell(r, 1, file.commentCount);
                             var bound = context.fileIds.includes(file.fileId);
                             button(bound ? "已绑定" : "绑定", async function () {
-                                await update(context.fileIds.concat(file.fileId), context.activeFileId, context);
+                                await update(context.fileIds.concat(file.fileId), context.activeFileId, context, true);
                                 if (selected === context.mediaId) report("已绑定，当前生效选择保持不变");
                             }, r).disabled = bound || file.status !== "Published";
                         }, ["文件名", "条数", "操作"]);
@@ -691,7 +903,7 @@
                             function (r, file) {
                                 cell(r, 0, file.storedFileName); cell(r, 1, file.format);
                                 cell(r, 2, file.commentCount); cell(r, 3, file.sizeBytes == null ? "—" : (file.sizeBytes / 1024).toFixed(1) + " KB");
-                                cell(r, 4, new Date(file.importedAtUtcMs).toLocaleString()); cell(r, 5, file.bindingCount);
+                                cell(r, 4, new Date(file.importedAtUtcMs).toLocaleString()); cell(r, 5, file.bindingCount + (file.planReferenceCount || 0));
                                 var actions = more(r);
                                 button(
                                     "详情",
@@ -766,7 +978,7 @@
                                         }
                                     },
                                     actions,
-                                ).disabled = file.bindingCount > 0;
+                                ).disabled = file.bindingCount + (file.planReferenceCount || 0) > 0;
                             }, ["文件名", "格式", "条数", "大小", "导入时间", "引用", "操作"],
                         );
                     }
@@ -779,7 +991,7 @@
                         var result = await req(
                             "Files/" +
                                 file +
-                                "/Bindings?startIndex=" +
+                                "/References?startIndex=" +
                                 start +
                                 "&limit=50",
                         );
@@ -791,7 +1003,7 @@
                                 return references(file, s, parent);
                             },
                             function (r, b) {
-                                line(r, (b.mediaName || b.mediaId) + " · " + b.checkStatus + (b.activeFileId === file ? " · 生效" : ""));
+                                line(r, (b.mediaName || b.mediaId) + " · " + b.checkStatus + (b.kind === "plan" ? " · 方案：" + b.name + " · " + b.segmentCount + " 个片段" : " · 单文件绑定"));
                             },
                         );
                     }
@@ -921,8 +1133,7 @@
                                                     "当前版本 " +
                                                         current.version +
                                                         "；生效 " +
-                                                        (current.activeFileId ||
-                                                            "停用") +
+                                                        (current.activePlanId ? "合并方案：" + current.activePlanId : current.activeFileId ? "单文件：" + current.activeFileId : current.isDeactivated ? "已停用" : "未选择") +
                                                         "；绑定 " +
                                                         current.fileIds.join(
                                                             ", ",
@@ -1078,6 +1289,8 @@
                         "pageshow",
                         action(async function () {
                             alive = true;
+                            window.addEventListener("beforeunload", editorUnload);
+                            document.addEventListener("click", editorNavigate, true);
                             clearInterval(timer);
                             timer = setInterval(function () {
                                 if (alive && tab === "tasks")
@@ -1090,6 +1303,9 @@
                         }),
                     );
                     page.addEventListener("pagehide", function () {
+                        cancelPreview();
+                        window.removeEventListener("beforeunload", editorUnload);
+                        document.removeEventListener("click", editorNavigate, true);
                         alive = false;
                         clearInterval(timer);
                         timer = null;

@@ -107,7 +107,7 @@ public sealed class IndependentImportContractTests
             InsertFile(c, "file"); InsertBinding(c, "media", "file");
             InsertBatchAndTask(c, "batch", "media", "task", operation: "replace", replaceFileId: "file");
         }
-        var result = storage.CreateMigrator().Migrate(); Assert.Equal(3, result.FromVersion); Assert.Equal(4, result.ToVersion); Assert.NotNull(result.BackupPath);
+        var result = storage.CreateMigrator().Migrate(); Assert.Equal(3, result.FromVersion); Assert.Equal(SchemaMigrations.CurrentVersion, result.ToVersion); Assert.NotNull(result.BackupPath);
         using (var c = storage.Factory.CreateOpenConnection())
         {
             Assert.Equal(1, ScalarLong(c, "SELECT COUNT(*) FROM ImportSlots WHERE BatchId='batch'"));
@@ -121,7 +121,7 @@ public sealed class IndependentImportContractTests
             backup.BackupDatabase(c);
         }
         Assert.Equal(3, storage.CreateMigrator(old).Migrate().ToVersion);
-        Assert.Equal(4, storage.CreateMigrator().Migrate().ToVersion);
+        Assert.Equal(SchemaMigrations.CurrentVersion, storage.CreateMigrator().Migrate().ToVersion);
     }
 
     [Fact]

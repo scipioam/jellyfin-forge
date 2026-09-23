@@ -5,14 +5,14 @@ const assert = require('assert/strict');
 exports.check = async function ({page, item, api}) {
     const other = '11111111111111111111111111111111';
     const listPattern = /\/Danmuku\/Media\?/;
-    const bindingPattern = new RegExp('/Danmuku/Media/' + other + '/Bindings');
+    const bindingPattern = new RegExp('/Danmuku/Media/' + other + '/CombinePlans');
     await page.route(listPattern, async route => {
         const response = await route.fetch(), data = await response.json();
         const key = 'Items' in data ? 'Items' : 'items';
         data[key].push({Id:other,Name:'Context B',Type:'Movie',CanBind:true});
         await route.fulfill({response,json:data});
     });
-    await page.route(bindingPattern, route => route.fulfill({json:{MediaId:other,Version:0,FileIds:[],ActiveFileId:null,IsDeactivated:false,CheckStatus:'Exists'}}));
+    await page.route(bindingPattern, route => route.fulfill({json:{Items:[],DefaultName:'combine-1',DurationMs:null,State:{MediaId:other,Version:0,FileIds:[],ActiveFileId:null,ActivePlanId:null,IsDeactivated:false,CheckStatus:'Exists'}}}));
     await page.locator('[data-tab="media"]').click(); await page.locator('#dm-search-media').click();
     const selectA = async () => {
         await page.locator('#dm-media-list .dm-row').filter({hasNotText:'Context B'}).getByRole('button',{name:'管理绑定'}).first().click();
@@ -53,7 +53,7 @@ exports.check = async function ({page, item, api}) {
     });
     await page.getByRole('button',{name:'停用本媒体弹幕',exact:true}).click(); await updating;
     await selectB(); releaseUpdate(); await page.waitForTimeout(100);
-    assert.equal(await page.locator('#dm-binding h3').textContent(),'Context B','late A binding response replaced B');
+    assert.equal(await page.locator('#dm-binding h3').first().textContent(),'Context B','late A binding response replaced B');
     await page.unroute(updatePattern);
     const current = await api('/Danmuku/Media/' + item + '/Bindings');
     await api('/Danmuku/Media/' + item + '/Bindings', {expectedVersion:current.version,fileIds:original.fileIds,activeFileId:original.activeFileId}, 'PUT');

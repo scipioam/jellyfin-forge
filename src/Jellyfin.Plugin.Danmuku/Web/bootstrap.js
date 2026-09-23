@@ -19,7 +19,7 @@
 
     // Kept identical in both entry points: old cached bootstrap can load this player alone.
     function ensureLayout(base) {
-        var version = 'm1-v5', contract = 'm1-density-v1';
+        var version = 'm2-v1', contract = 'm2-speed-v1';
         var registry = window.__danmukuDependencies || (window.__danmukuDependencies = Object.create(null));
         var key = base + '|' + version + '|' + contract;
         function valid() { return window.DanmukuLayout && window.DanmukuLayout.resourceVersion === version && window.DanmukuLayout.renderVersion === contract; }
@@ -181,7 +181,7 @@
         // This bootstrap may itself remain cached during a later upgrade. An
         // unknown resource version belongs to its own player/dependency gate;
         // do not pin that newer player to this bootstrap's older layout contract.
-        if (version !== 'm1-v5') {
+        if (version !== 'm2-v1') {
             injectScript(base + '/Danmuku/Web/Danmuku.js?v=' + encodeURIComponent(version));
             return;
         }

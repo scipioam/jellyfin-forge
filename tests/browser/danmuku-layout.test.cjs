@@ -101,3 +101,37 @@ test('the minimum cap counts fixed and scrolling together and admits again after
     assert.deepEqual(finish(l, 4000).indices, [2]);
     assert.equal(l.dropped.count, 1);
 });
+
+test('M2 scrolling speed controls lifetime, position and lookback while fixed lifetime stays 4s', () => {
+    for (const speed of [.5, 1, 1.3, 2]) {
+        const lifetime = 8000 / speed;
+        const l = make([item(0), item(0, 5)], { scrollSpeed: speed, mode: 'overlap' });
+        finish(l, 0);
+        assert.equal(l.x(0, lifetime / 2), 30);
+        assert.ok(l.snapshot(lifetime - .01).indices.includes(0));
+        assert.ok(!l.snapshot(lifetime).indices.includes(0));
+        assert.ok(l.snapshot(3999).indices.includes(1));
+        assert.ok(!l.snapshot(4000).indices.includes(1));
+        if (speed === .5) assert.deepEqual(l.snapshot(12000).indices, [0]);
+    }
+});
+test('M2 speed scales collision admission and continuous/seek layout stays identical', () => {
+    for (const speed of [.5, 1, 1.3, 2]) {
+        const collision = make([item(0), item(2000 / speed)], { height: 20, scrollSpeed: speed });
+        collision.measure(1, 500, 20);
+        assert.deepEqual(finish(collision, 2000 / speed).indices, [0]);
+        const items = Array.from({ length: 2000 }, (_, i) => item(i * 40, i % 9 ? 1 : 5));
+        const continuous = make(items, { scrollSpeed: speed });
+        for (let time = 0; time <= 50000; time += 500) finish(continuous, time);
+        const rebuilt = make(items, { scrollSpeed: speed });
+        assert.deepEqual(finish(rebuilt, 50000), continuous.snapshot(50000));
+        assert.deepEqual(rebuilt.decisions, continuous.decisions);
+    }
+});
+test('M2 invalid speed falls back to 1.0', () => {
+    for (const scrollSpeed of [undefined, null, '0.5', NaN, Infinity, .4, 2.1, 1.25]) {
+        const l = make([item(0)], { scrollSpeed });
+        assert.deepEqual(finish(l, 7999).indices, [0]);
+        assert.deepEqual(l.snapshot(8000).indices, []);
+    }
+});

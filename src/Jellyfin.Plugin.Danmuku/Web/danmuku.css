@@ -120,3 +120,8 @@
     outline: 2px solid #fff;
     outline-offset: 3px;
 }
+
+.danmuku-panel .danmuku-speed { gap: 8px; }
+.danmuku-speed span, .danmuku-speed output { white-space: nowrap; flex-shrink: 0; }
+.danmuku-speed input[type="range"] { width: 82px; min-width: 50px; flex: 1 1 82px; accent-color: #00a4dc; }
+.danmuku-speed input:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
