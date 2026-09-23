@@ -161,7 +161,10 @@ async function play(page, overlay = true) {
         // before detaching the page; rapid navigation otherwise races Jellyfin's
         // emby-scrollbuttons attached/detached callbacks.
         await page.locator(".homePage").first().waitFor();
-        await page.waitForLoadState("networkidle");
+        // Global network idle is not a reliable readiness signal after playback.
+        // The fixture always has a library card, but a watched video may no
+        // longer appear on home. Use rendered content, not global network idle.
+        await page.locator('.homePage .card[data-id]').first().waitFor();
         await page.evaluate(
             () =>
                 new Promise((resolve) =>
@@ -377,8 +380,12 @@ function p95(values) {
             await route.continue();
         };
         await page.route(settingsRoute, holdSettings);
-        // Actual registered plugin configuration route, not a standalone mock page.
-        await page.goto(base + "/web/#/configurationpage?name=Danmuku");
+        // Load the registered plugin route in a fresh document. Changing only
+        // the hash tears down native home scrollers while their attached RAF
+        // may still be queued (Jellyfin Web: scrollHandler is not a function).
+        // A query change forces document navigation without patching native
+        // widgets or ignoring page errors. SPA playback cleanup remains tested.
+        await page.goto(base + "/web/?m1=configuration#/configurationpage?name=Danmuku");
         await page.locator("#DanmukuConfigPage").waitFor({ timeout: 30000 });
         for (const section of ["media", "files", "tasks", "settings"]) {
             await page.locator('[data-tab="' + section + '"]').click();
