@@ -30,7 +30,19 @@ env:
 permissions:
   contents: read
 jobs:
+  release-checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m unittest discover -s tests/build -p 'test_*.py'
+      - name: Validate Danmuku release tag before building
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/danmuku-v')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python3 build/release-danmuku.py validate --tag "$RELEASE_TAG"
   standalone:
+    needs: release-checks
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
@@ -164,3 +176,24 @@ jobs:
             artifacts/m1/integration/**/performance-progress.json
             artifacts/m1/integration/**/server.log
             artifacts/m1/integration/**/*-failure.json
+  danmuku-release-draft:
+    needs: [standalone, smoke, danmuku-integration]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/danmuku-v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: jellyfin-plugin-danmuku
+          path: artifacts
+      - name: Create or complete Danmuku release draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+        run: python3 build/release-danmuku.py draft --tag "$RELEASE_TAG" --repository "$RELEASE_REPOSITORY"
