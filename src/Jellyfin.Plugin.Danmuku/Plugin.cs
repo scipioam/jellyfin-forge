@@ -13,11 +13,18 @@ public sealed class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
     public Plugin(IApplicationPaths applicationPaths, IXmlSerializer xmlSerializer)
         : base(applicationPaths, xmlSerializer)
     {
+        Configuration.Validate();
     }
 
     public override string Name => "Danmuku";
     public override Guid Id => Guid.Parse(PluginId);
     public override string Description => "Independent danmuku management for Jellyfin.";
+
+    public override void UpdateConfiguration(BasePluginConfiguration configuration)
+    {
+        ((PluginConfiguration)configuration).Validate(requireAllRenderLimits: true);
+        base.UpdateConfiguration(configuration);
+    }
 
     public IEnumerable<PluginPageInfo> GetPages() =>
     [

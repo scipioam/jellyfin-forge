@@ -2,8 +2,13 @@
 import json
 import os
 from pathlib import Path
+import re
 import secrets
+import shutil
+import socket
+import sqlite3
 import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -25,6 +30,42 @@ def check(condition, message):
         raise RuntimeError(message)
 
 
+def expected_danmuku_schema_version():
+    source = (ROOT / 'src/Jellyfin.Plugin.Danmuku/Storage/SchemaMigrations.cs').read_text()
+    match = re.search(r'CurrentVersion\s*=\s*(\d+)', source)
+    if not match:
+        raise RuntimeError('could not read Danmuku schema version from SchemaMigrations.cs')
+    return int(match.group(1))
+
+
+def read_danmuku_db(db_path):
+    """Read SchemaVersion and journal_mode; fall back to a copy if WAL read-only fails."""
+    check(Path(db_path).is_file(), f'Danmuku database not found: {db_path}')
+
+    def query(target):
+        connection = sqlite3.connect(target, uri=str(target).startswith('file:'))
+        try:
+            journal = connection.execute('PRAGMA journal_mode;').fetchone()[0]
+            tables = [row[0] for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")]
+            version = connection.execute('SELECT Version FROM SchemaVersion WHERE Id = 1;').fetchone()[0]
+            return journal, tables, version
+        finally:
+            connection.close()
+
+    try:
+        journal, tables, version = query(f'file:{db_path}?mode=ro')
+    except sqlite3.Error:
+        with tempfile.TemporaryDirectory() as tmp:
+            for suffix in ('', '-wal', '-shm'):
+                source = Path(str(db_path) + suffix)
+                if source.exists():
+                    shutil.copy2(source, Path(tmp) / (db_path.name + suffix))
+            journal, tables, version = query(Path(tmp) / db_path.name)
+    check('SchemaVersion' in tables, 'SchemaVersion table missing')
+    return {'journalMode': journal, 'schemaVersion': version, 'tables': tables}
+
+
 def scenario(names):
     tag = '-'.join(n.lower() for n in names)
     project = f'jellyfin-forge-smoke-{uuid.uuid4().hex[:10]}'
@@ -41,6 +82,7 @@ def scenario(names):
     compose = data / 'compose.json'
     compose.write_text(json.dumps({'name': project, 'services': {'jellyfin': {
         'image': IMAGE, 'user': f'{os.getuid()}:{os.getgid()}',
+        'cpus': 1, 'mem_limit': '1g', 'environment': {'DOTNET_PROCESSOR_COUNT': '1'},
         'ports': ['127.0.0.1:18096:8096'],
         'volumes': [f'{data}/config:/config', f'{data}/cache:/cache', f'{data}/media:/media:ro'],
     }}}))
@@ -69,15 +111,37 @@ def scenario(names):
 
         for attempt in range(120):
             try:
+                info = request('/System/Info/Public')
                 request('/health')
-                request('/Startup/User')
-                break
+                if isinstance(info, dict) and info.get('Version'):
+                    break
             except (OSError, RuntimeError):
-                time.sleep(2)
+                pass
+            time.sleep(2)
         else:
             raise RuntimeError('Jellyfin did not become ready within 240 seconds')
         password = secrets.token_urlsafe(32)
-        request('/Startup/User', {'Name': 'forge-smoke', 'Password': password}, expected=204)
+        # Jellyfin 12.1 exposes POST /Startup/User only after the initial
+        # configuration has been submitted (same order as the Web wizard).
+        startup_config = request('/Startup/Configuration')
+        request('/Startup/Configuration', {
+            'ServerName': 'jellyfin-forge-smoke',
+            'UICulture': startup_config.get('UICulture') or 'en-US',
+            'MetadataCountryCode': startup_config.get('MetadataCountryCode') or 'US',
+            'PreferredMetadataLanguage': startup_config.get('PreferredMetadataLanguage') or 'en',
+        }, expected=204)
+        for attempt in range(30):
+            try:
+                # GET first: after the configuration reload POST /Startup/User
+                # answers 404 on 12.1 until the route has been initialized.
+                request('/Startup/User')
+                request('/Startup/User', {'Name': 'forge-smoke', 'Password': password}, expected=204)
+                break
+            except RuntimeError as error:
+                if attempt == 29:
+                    raise
+                time.sleep(2)
+        request('/Startup/RemoteAccess', {'EnableRemoteAccess': False}, expected=204)
         request('/Startup/Complete', {}, expected=204)
         token = request('/Users/AuthenticateByName', {'Username': 'forge-smoke', 'Pw': password})['AccessToken']
         plugins = request('/Plugins', token=token)
@@ -102,6 +166,26 @@ def scenario(names):
             config['InstanceLabel'] = f'{name} smoke 保存'
             request(endpoint, config, token, expected=204)
             check(request(endpoint, token=token)['InstanceLabel'] == config['InstanceLabel'], 'Configuration round-trip failed')
+
+        danmuku_db = None
+        if 'Danmuku' in names:
+            expected_version = expected_danmuku_schema_version()
+            # DanmukuDataPaths uses IApplicationPaths.DataPath directly.
+            db_path = data / 'config/data/Danmuku/danmuku.db'
+            for attempt in range(90):
+                if db_path.is_file():
+                    try:
+                        danmuku_db = read_danmuku_db(db_path)
+                        break
+                    except (RuntimeError, sqlite3.Error):
+                        pass
+                time.sleep(2)
+            check(danmuku_db is not None, 'Danmuku database was not created')
+            check(danmuku_db['schemaVersion'] == expected_version,
+                  f"unexpected schema version {danmuku_db['schemaVersion']} (expected {expected_version})")
+            check(danmuku_db['journalMode'].lower() == 'wal',
+                  f"unexpected journal mode {danmuku_db['journalMode']}")
+
         # Verify persistence across a server restart, not just an in-memory update.
         run(*command, 'restart', 'jellyfin')
         base = 'http://' + run(*command, 'port', 'jellyfin', '8096', capture_output=True).stdout.strip()
@@ -117,8 +201,17 @@ def scenario(names):
         for name in names:
             config = request(f'/Plugins/{ids[name]}/Configuration', token=token)
             check(config['InstanceLabel'] == f'{name} smoke 保存', 'Configuration did not persist')
+        if danmuku_db is not None:
+            after_restart = read_danmuku_db(data / 'config/data/Danmuku/danmuku.db')
+            check(after_restart['schemaVersion'] == danmuku_db['schemaVersion'],
+                  'Danmuku schema version changed after restart')
+            danmuku_db = after_restart
+        checks = ['load', 'health', 'anonymous rejected', 'dashboard resource',
+                  'configuration persistence', 'sibling absence or coexistence']
+        if danmuku_db is not None:
+            checks.append('danmuku database schema version and WAL mode')
         result = {'scenario': tag, 'result': 'passed', 'image': IMAGE, 'plugins': ids,
-                  'checks': ['load', 'health', 'anonymous rejected', 'dashboard resource', 'configuration persistence', 'sibling absence or coexistence']}
+                  'danmukuDb': danmuku_db, 'checks': checks}
         (data / 'result.json').write_text(json.dumps(result, indent=2) + '\n')
         print(json.dumps(result), flush=True)
         return result
@@ -129,5 +222,13 @@ def scenario(names):
 
 
 if __name__ == '__main__':
-    results = [scenario(names) for names in [('Danmuku',), ('AgentBridge',), NAMES]]
-    (ROOT / 'artifacts/smoke/results.json').write_text(json.dumps(results, indent=2) + '\n')
+    prior = run('docker', 'ps', '-q', '--filter', 'label=com.docker.compose.project=jellyfin-forge-dev', capture_output=True).stdout.split()
+    try:
+        if prior: run('docker', 'stop', *prior)
+        with socket.socket() as probe:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            probe.bind(('127.0.0.1', 18096))
+        results = [scenario(names) for names in [('Danmuku',), ('AgentBridge',), NAMES]]
+        (ROOT / 'artifacts/smoke/results.json').write_text(json.dumps(results, indent=2) + '\n')
+    finally:
+        if prior: run('docker', 'start', *prior)

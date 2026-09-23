@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <Version>0.1.0</Version>
-    <AssemblyVersion>0.1.0.0</AssemblyVersion>
+    <Version>0.0.1</Version>
+    <AssemblyVersion>0.0.1.0</AssemblyVersion>
     <PluginGuid>6f79690c-c1d0-4738-b241-09aaa2c570e7</PluginGuid>
     <Description>Independent danmuku management for Jellyfin.</Description>
   </PropertyGroup>
@@ -9,6 +9,17 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <PackageReference Include="Jellyfin.Controller" Version="12.1.0" ExcludeAssets="runtime" />
     <PackageReference Include="Jellyfin.Model" Version="12.1.0" ExcludeAssets="runtime" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
     <EmbeddedResource Include="Configuration/configPage.html" />
+    <EmbeddedResource Include="Web/bootstrap.js">
+      <LogicalName>Jellyfin.Plugin.Danmuku.Web.bootstrap.js</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Web/danmuku-layout.js" />
+    <EmbeddedResource Include="Web/danmuku.js">
+      <LogicalName>Jellyfin.Plugin.Danmuku.Web.danmuku.js</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Web/danmuku.css">
+      <LogicalName>Jellyfin.Plugin.Danmuku.Web.danmuku.css</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
 </Project>

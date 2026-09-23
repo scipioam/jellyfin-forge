@@ -1,13 +1,38 @@
 name: Build and smoke test
 on:
   push:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**/*.png'
+      - 'docs/**/*.jpg'
+      - 'docs/**/*.svg'
   pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**/*.png'
+      - 'docs/**/*.jpg'
+      - 'docs/**/*.svg'
   workflow_dispatch:
+    inputs:
+      suite:
+        description: Verification suite (performance includes build and unit tests)
+        type: choice
+        default: regular
+        options: [regular, performance, all]
+# Keep push, PR and manual runs separate: a light push must never cancel a full PR.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+env:
+  DOTNET_PROCESSOR_COUNT: 1
+  MSBUILDDISABLENODEREUSE: 1
+  UseSharedCompilation: false
 permissions:
   contents: read
 jobs:
   standalone:
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -17,9 +42,26 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
-      - run: ./build/build.sh "${{ matrix.plugin }}"
-      - run: ./build/test.sh "${{ matrix.plugin }}"
-      - run: ./build/package.sh "${{ matrix.plugin }}"
+          cache: true
+          cache-dependency-path: '**/packages.lock.json'
+      - name: Build and test once
+        env:
+          PLUGIN_KEY: ${{ matrix.plugin }}
+        run: |
+          source build/common.sh
+          select_plugin "$PLUGIN_KEY"
+          test_project="tests/Jellyfin.Plugin.$PLUGIN_NAME.Tests/Jellyfin.Plugin.$PLUGIN_NAME.Tests.csproj"
+          dotnet restore "$test_project" --locked-mode
+          dotnet build "$test_project" -c Release --no-restore
+          dotnet test "$test_project" -c Release --no-build --no-restore --logger trx --results-directory "artifacts/tests/$PLUGIN_KEY"
+      - name: Package tested binaries
+        run: python3 build/package.py "${{ matrix.plugin }}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unit-tests-${{ matrix.plugin }}
+          path: artifacts/tests/${{ matrix.plugin }}/**/*.trx
+          if-no-files-found: warn
       - uses: actions/upload-artifact@v4
         with:
           name: jellyfin-plugin-${{ matrix.plugin }}
@@ -28,14 +70,21 @@ jobs:
             artifacts/jellyfin-plugin-${{ matrix.plugin }}-*.sha256
           if-no-files-found: error
   smoke:
+    needs: standalone
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))) || (github.event_name == 'workflow_dispatch' && inputs.suite != 'performance')
+    timeout-minutes: 20
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/download-artifact@v4
         with:
-          dotnet-version: '10.0.x'
-      - run: ./build/build.sh
-      - run: ./build/smoke-test.sh
+          pattern: jellyfin-plugin-*
+          path: artifacts
+          merge-multiple: true
+      - name: Verify downloaded packages
+        working-directory: artifacts
+        run: sha256sum --check jellyfin-plugin-*.zip.sha256
+      - run: python3 build/smoke-test.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -44,3 +93,74 @@ jobs:
             artifacts/smoke/**/result.json
             artifacts/smoke/**/server.log
             artifacts/smoke/results.json
+  danmuku-integration:
+    needs: standalone
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))) || (github.event_name == 'workflow_dispatch' && inputs.suite != 'performance')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: jellyfin-plugin-danmuku
+          path: artifacts
+      - name: Verify downloaded package
+        working-directory: artifacts
+        run: sha256sum --check jellyfin-plugin-danmuku-*.zip.sha256
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: tests/browser/package-lock.json
+      - run: npm ci --prefix tests/browser
+      - run: cd tests/browser && npx playwright install --with-deps chromium firefox
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: docker pull jellyfin/jellyfin:12.1
+      - run: python3 -m unittest discover -s tests/integration -p 'test_*.py'
+      - run: node --test tests/browser/danmuku-layout.test.cjs
+      - run: python3 tests/integration/m1.py --browser
+      - run: python3 tests/integration/m1.py --browser --base-url /jellyfin
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: danmuku-integration-results
+          path: |
+            artifacts/m1/integration/**/*-results.json
+            artifacts/m1/integration/**/*-browser.json
+            artifacts/m1/integration/**/server.log
+            artifacts/m1/integration/**/*-failure.json
+            artifacts/m1/integration/**/*.png
+          if-no-files-found: ignore
+  danmuku-performance:
+    needs: standalone
+    if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'performance' || inputs.suite == 'all')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: jellyfin-plugin-danmuku
+          path: artifacts
+      - name: Verify downloaded package
+        working-directory: artifacts
+        run: sha256sum --check jellyfin-plugin-danmuku-*.zip.sha256
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: tests/browser/package-lock.json
+      - run: npm ci --prefix tests/browser
+      - run: cd tests/browser && npx playwright install --with-deps chromium
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: docker pull jellyfin/jellyfin:12.1
+      - run: python3 tests/integration/m1.py --performance
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: danmuku-performance-results
+          path: |
+            artifacts/m1/integration/**/*-performance.json
+            artifacts/m1/integration/**/performance-progress.json
+            artifacts/m1/integration/**/server.log
+            artifacts/m1/integration/**/*-failure.json

@@ -1,0 +1,10 @@
+# Optional: common.sh includes this only after web-entry.py has generated an entry.
+services:
+  jellyfin:
+    volumes:
+      - type: bind
+        source: ${JELLYFIN_FORGE_WEB_ENTRY}
+        target: ${JELLYFIN_FORGE_WEB_TARGET}
+        read_only: true
+        bind:
+          create_host_path: false
