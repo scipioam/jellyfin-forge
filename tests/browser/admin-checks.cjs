@@ -30,8 +30,39 @@ exports.check = async function ({page, api, item, dir, engine}) {
     await page.getByRole('button',{name:'添加已有文件',exact:true}).click();
     await page.locator('#dm-picker-search').fill(name);
     await page.getByRole('button',{name:'查找文件',exact:true}).click();
-    await page.locator('#dm-picker-list .dm-row').filter({hasText:name}).getByRole('button',{name:'绑定',exact:true}).click();
-    await page.locator('#dm-binding .dm-row').filter({hasText:name}).waitFor();
+    const boundRows = page.getByRole('region',{name:'已绑定文件',exact:true}).locator('.dm-row');
+    const bindingPath = '/Danmuku/Media/' + item + '/Bindings';
+    const isBindingWrite = request => request.method()==='PUT' && new URL(request.url()).pathname.endsWith(bindingPath);
+    let releaseBinding;
+    const bindingGate = new Promise(resolve=>releaseBinding=resolve);
+    const bindingPattern = new RegExp(bindingPath + '$');
+    const holdBinding = async route => {
+        if (isBindingWrite(route.request())) await bindingGate;
+        await route.continue();
+    };
+    await page.route(bindingPattern,holdBinding);
+    try {
+        const [response] = await Promise.all([
+            page.waitForResponse(response=>isBindingWrite(response.request())),
+            (async()=>{
+                try {
+                    await Promise.all([
+                        page.waitForRequest(isBindingWrite),
+                        page.locator('#dm-picker-list .dm-row').filter({hasText:name}).getByRole('button',{name:'绑定',exact:true}).click(),
+                    ]);
+                    // The old selector matched the picker before the PUT reached the server.
+                    assert.equal(await page.locator('#dm-binding .dm-row').filter({hasText:name}).count(),1);
+                    assert.equal(await boundRows.filter({hasText:name}).count(),0);
+                    assert(!(await api(bindingPath)).fileIds.includes(file.fileId));
+                } finally { releaseBinding(); }
+            })(),
+        ]);
+        assert.equal(response.status(),200,'binding write failed');
+        await boundRows.filter({hasText:name}).waitFor();
+    } finally {
+        releaseBinding();
+        await page.unroute(bindingPattern,holdBinding);
+    }
     const after = await api('/Danmuku/Media/' + item + '/Bindings');
     assert(after.fileIds.includes(file.fileId)); assert.equal(after.activeFileId,before.activeFileId);
     for (const viewport of [{width:1440,height:900},{width:390,height:844}]) {
@@ -48,7 +79,7 @@ exports.check = async function ({page, api, item, dir, engine}) {
     }
     await page.setViewportSize({width:1440,height:900});
     await page.locator('[data-tab="media"]').click();
-    const row=page.locator('#dm-binding .dm-row').filter({hasText:name});
+    const row=boundRows.filter({hasText:name});
     await row.locator('summary').click();
     await row.getByRole('button',{name:'解除绑定'}).click();
     await row.waitFor({state:'detached'});
