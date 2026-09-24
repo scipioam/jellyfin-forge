@@ -93,3 +93,11 @@ test-results/
 /temp/
 
 /deploy/docker/dev/web-entry/
+
+# Production deployment local data (prefer external absolute paths)
+/deploy/docker/prod/config/
+/deploy/docker/prod/cache/
+/deploy/docker/prod/media/
+/deploy/docker/prod/web-entry/
+/deploy/docker/prod/packages/
+/deploy/docker/prod/backups/

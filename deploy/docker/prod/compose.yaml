@@ -1,0 +1,30 @@
+name: jellyfin-forge-prod
+services:
+  jellyfin:
+    image: ${JELLYFIN_IMAGE:?Set JELLYFIN_IMAGE in .env}
+    user: "${JELLYFIN_UID:?Set JELLYFIN_UID}:${JELLYFIN_GID:?Set JELLYFIN_GID}"
+    restart: unless-stopped
+    ports:
+      - "${JELLYFIN_BIND_ADDRESS:-127.0.0.1}:${JELLYFIN_HTTP_PORT:-8096}:8096"
+    volumes:
+      - type: bind
+        source: ${JELLYFIN_CONFIG_DIR:?Set an absolute config directory}
+        target: /config
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${JELLYFIN_CACHE_DIR:?Set an absolute cache directory}
+        target: /cache
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${JELLYFIN_MEDIA_DIR:?Set an existing absolute media directory}
+        target: /media
+        read_only: true
+        bind:
+          create_host_path: false
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

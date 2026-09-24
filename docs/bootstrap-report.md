@@ -23,7 +23,7 @@ jellyfin-forge/
 ├── build/                     # build/test/package/install/uninstall/restart/smoke
 ├── deploy/
 │   ├── docker/dev/             # compose.yaml + config/cache/media
-│   └── synology/README.md
+│   └── README.md               # 插件部署说明
 ├── docs/                       # architecture.md + 本报告
 ├── .github/workflows/ci.yml
 ├── .editorconfig

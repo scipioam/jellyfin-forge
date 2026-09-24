@@ -1,0 +1,10 @@
+# Optional Danmuku Web integration; generate and verify the entry before startup.
+services:
+  jellyfin:
+    volumes:
+      - type: bind
+        source: ${JELLYFIN_WEB_ENTRY_DIR:?Set an absolute entry directory}/current/index.html
+        target: ${JELLYFIN_WEB_PATH:-/jellyfin/jellyfin-web}/index.html
+        read_only: true
+        bind:
+          create_host_path: false
