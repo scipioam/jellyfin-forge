@@ -17,7 +17,7 @@ compose_dev() {
     local compose_args=(-f "$FORGE_ROOT/deploy/docker/dev/compose.yaml")
     local entry_root="$FORGE_ROOT/deploy/docker/dev/web-entry"
     if [[ -f "$entry_root/current/index.html" ]]; then
-        python3 "$FORGE_ROOT/build/web-entry.py" verify --image jellyfin/jellyfin:12.1 --output "$entry_root" >/dev/null
+        python3 "$FORGE_ROOT/build/web-entry.py" verify --image jellyfin/jellyfin:12.4 --output "$entry_root" >/dev/null
         export JELLYFIN_FORGE_WEB_ENTRY="$entry_root/current/index.html"
         JELLYFIN_FORGE_WEB_TARGET="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["webPath"] + "/index.html")' "$entry_root/current/manifest.json")"
         export JELLYFIN_FORGE_WEB_TARGET

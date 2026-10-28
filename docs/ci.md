@@ -12,7 +12,7 @@
 | `main` 代码 push／普通标签 push | 与代码 PR 相同 |
 | `danmuku-vX.Y.Z` 标签 push | 先校验标签和项目版本，再执行完整常规验证；成功后上传 Danmuku Release 草稿 |
 | 手动 `regular`（默认） | 完整常规验证，允许用于纯文档提交 |
-| 手动 `performance` | 两插件构建、单测、打包及 Danmuku 性能长测；性能入口自身仍包含 HTTP／部署准备验证 |
+| 手动 `performance` | 两插件构建、单测、打包及 24 组 M2 合并性能、2 组 M1 单文件基线；最后汇总完整性与阈值 |
 | 手动 `all` | 完整常规验证与性能长测 |
 
 纯文档仅包括任意目录的 `.md`，以及 `docs/` 内的 `.png`、`.jpg`、`.svg`。任何其他文件变更都会触发检查，包括构建、依赖、部署、工作流和 LICENSE；不将整个 `docs/` 目录无条件忽略。PR 判断的是相对目标分支的累计改动：含代码的 PR 即使最新一次只改文档，也仍需完整验证。push 判断本次推送的改动。标签 push 保留完整常规验证；GitHub 的路径过滤不作用于标签，不将其视为纯文档分支 push。
@@ -27,7 +27,7 @@
 
 smoke、集成和性能任务依赖 `standalone` 成功，下载同次 workflow 的 ZIP 与校验文件，通过 SHA-256 检查后直接调用 Python 测试入口；两个浏览器路径使用同一包。下游无需 .NET SDK，也不会重新编译或打包。开发者本地 `build/*.sh` 仍保留原先自动构建的便利行为。
 
-NuGet 缓存由提交的 `packages.lock.json` 标识，npm 缓存由浏览器 `package-lock.json` 标识；缓存缺失时正常恢复，不缓存发布包作为测试输入。两个插件各在独立 runner 构建；各重度任务内部仍限制 .NET 并发、禁用节点复用和共享编译，浏览器按现有测试入口串行。容器保持现有资源限制和固定测试端口。
+NuGet 缓存由提交的 `packages.lock.json` 标识，npm 缓存由浏览器 `package-lock.json` 标识；缓存缺失时正常恢复，不缓存发布包作为测试输入。两个插件各在独立 runner 构建；各重度任务内部仍限制 .NET 并发、禁用节点复用和共享编译，浏览器按现有测试入口串行。容器保持固定测试端口；资源限额可通过 `FORGE_TEST_CPUS`／`FORGE_TEST_MEMORY` 按执行环境指定，未设置时不施加额外容器限额，不强制继承某台开发机器的配置。
 
 ## 证据与限制
 
@@ -41,7 +41,11 @@ NuGet 缓存由提交的 `packages.lock.json` 标识，npm 缓存由浏览器 `p
 
 M2 实施中，常规 `danmuku-integration` 已追加两路径 `tests/integration/m2.py --browser`，内部串行执行 Chromium／Firefox，超时调整为 120 分钟。继续直接使用同次构建下载的包，不重新打包；M2 HTTP 结果记录包哈希。独立的 `danmuku-m2-integration-results` artifact 在失败时仍上传明确白名单内的结果、日志及截图，不递归上传配置、凭据或数据库。
 
-当前 M2 驱动仅覆盖已实现功能子集，详见 [M2 验证记录](SpecAndPlan/M2-Danmuku-Validation.md)。计划中的 24 组 M2 性能＋2 组 M1 基线、缺组／失败汇总及故意失败证据验证尚未实施；现有手动性能 job 仍是 M1 入口，不能称为 M2 性能验收。此段不改变下面的历史验证事实，也不表示远端 CI 已执行。
+性能组统一定义在 `tests/integration/performance-groups.json`：24 个 M2 组覆盖路径、视窗、默认／最大负载及 0.5／1／2 速度，另有根路径和 `/jellyfin` 两个 M1 组，各包含原四种视窗／配置。`performance-manifest` 输出矩阵，性能任务 `max-parallel: 1`、`fail-fast: false`，每组超时 150 分钟；下游直接执行 `tests/integration/performance.py --group <id>`，不重新构建。每组保留关闭／开启各 10 分钟、20 次加载／设置／seek 及 20 次进出的完整测量。
+
+`performance-summary` 使用 `always()` 收集 26 组结果，拒绝缺组、失败、重复、包哈希不一致、样本不足及阈值不达标；取消的组也不能形成完整通过结论。证据上传仅匹配各组结果、进度、日志及失败截图，不上传配置、账号或数据库。局部重跑应明确选择同一已测包的证据，不能混入短预检或其他包成绩。
+
+本地路由、包复用、证据白名单、故意失败传播和汇总拒绝条件已有自动化检查；实际功能及性能结果见 [M2 验证记录](SpecAndPlan/M2-Danmuku-Validation.md)。此段不改写下面的历史验证事实，也不表示 GitHub 远端任务、下载和上传已经执行。
 
 ## CI 分层调整的历史验证记录
 

@@ -47,6 +47,7 @@ public sealed class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<CombinePlanService>();
         serviceCollection.AddSingleton<ImportService>();
         serviceCollection.AddSingleton<Api.ManagementQueries>();
+        serviceCollection.AddScoped<Media.MediaPresentationService>();
         serviceCollection.AddSingleton<Playback.IPlaybackSessionLookup, Api.JellyfinPlaybackSessions>();
         serviceCollection.AddSingleton(new Playback.PlaybackBudgets());
         serviceCollection.AddSingleton<Playback.PlaybackService>();

@@ -8,6 +8,54 @@ namespace Jellyfin.Plugin.Danmuku.Tests;
 public sealed class CombineMigrationContractTests
 {
     [Fact]
+    public void V4TaskAndSelectionMatrixIsPreservedByteForByteIncludingBackup()
+    {
+        using var storage = new StorageTestContext();
+        storage.CreateMigrator(SchemaMigrations.Default.Take(4).ToArray()).Migrate();
+        var tables = new[] { "Files", "Comments", "MediaBindings", "ImportBatches", "ImportSlots", "ImportTasks", "ImportErrors", "BindingCheckJobs" };
+        string Dump(SqliteConnection connection, string table)
+        {
+            using var cmd = connection.CreateCommand(); cmd.CommandText = "SELECT * FROM " + table + " ORDER BY 1";
+            using var r = cmd.ExecuteReader(); var rows = new List<string>();
+            while (r.Read())
+            {
+                var values = new object?[r.FieldCount];
+                for (var i = 0; i < values.Length; i++) values[i] = r.IsDBNull(i) ? null : r.GetValue(i);
+                rows.Add(System.Text.Json.JsonSerializer.Serialize(values));
+            }
+            return string.Join('\n', rows);
+        }
+        Dictionary<string, string> before;
+        using (var c = storage.Factory.CreateOpenConnection())
+        {
+            InsertFile(c, "source"); InsertBinding(c, "active", "source");
+            Execute(c, """
+                INSERT INTO MediaState VALUES('active','source',0,17,'Exists',123);
+                INSERT INTO MediaState VALUES('disabled',NULL,1,18,'Missing',124);
+                INSERT INTO MediaState VALUES('unset',NULL,0,19,'CheckFailed',125);
+                INSERT INTO Comments(FileId,SourceOrdinal,TimeMs,Text,Color,Mode,FontSize) VALUES('source',0,1,'preserve',1,1,25);
+                """);
+            foreach (var status in new[] { "Queued", "Processing", "AwaitingConfirmation", "AwaitingConflictResolution", "Completed", "Cancelled", "Interrupted" })
+                InsertBatchAndTask(c, "batch-" + status, "active", "task-" + status, taskStatus: status);
+            before = tables.ToDictionary(table => table, table => Dump(c, table));
+        }
+        var migrated = storage.CreateMigrator().Migrate();
+        using var current = storage.Factory.CreateOpenConnection(); using var backup = OpenReadOnly(migrated.BackupPath!);
+        foreach (var table in tables) { Assert.Equal(before[table], Dump(current, table)); Assert.Equal(before[table], Dump(backup, table)); }
+        using var state = current.CreateCommand();
+        state.CommandText = "SELECT MediaId,ActiveFileId,IsDeactivated,Version,CheckStatus,CheckedAtUtcMs FROM MediaState ORDER BY MediaId";
+        using var reader = state.ExecuteReader();
+        var valuesAfter = new List<string>();
+        while (reader.Read())
+        {
+            var values = new object?[6];
+            for (var i = 0; i < values.Length; i++) values[i] = reader.IsDBNull(i) ? null : reader.GetValue(i);
+            valuesAfter.Add(System.Text.Json.JsonSerializer.Serialize(values));
+        }
+        Assert.Equal(Dump(backup, "MediaState"), string.Join('\n', valuesAfter));
+    }
+
+    [Fact]
     public void UpgradePreservesV4DataAndBackupAndRejectsOldProgram()
     {
         using var storage = new StorageTestContext();

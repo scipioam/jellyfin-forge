@@ -1,0 +1,276 @@
+[
+  {
+    "id": "m2-root-1440-default-s0_5",
+    "milestone": "m2",
+    "baseUrl": "",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "maximum": false,
+    "speed": 0.5
+  },
+  {
+    "id": "m2-root-1440-default-s1",
+    "milestone": "m2",
+    "baseUrl": "",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "maximum": false,
+    "speed": 1
+  },
+  {
+    "id": "m2-root-1440-default-s2",
+    "milestone": "m2",
+    "baseUrl": "",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "maximum": false,
+    "speed": 2
+  },
+  {
+    "id": "m2-root-1440-maximum-s0_5",
+    "milestone": "m2",
+    "baseUrl": "",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "maximum": true,
+    "speed": 0.5
+  },
+  {
+    "id": "m2-root-1440-maximum-s1",
+    "milestone": "m2",
+    "baseUrl": "",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "maximum": true,
+    "speed": 1
+  },
+  {
+    "id": "m2-root-1440-maximum-s2",
+    "milestone": "m2",
+    "baseUrl": "",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "maximum": true,
+    "speed": 2
+  },
+  {
+    "id": "m2-root-390-default-s0_5",
+    "milestone": "m2",
+    "baseUrl": "",
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "maximum": false,
+    "speed": 0.5
+  },
+  {
+    "id": "m2-root-390-default-s1",
+    "milestone": "m2",
+    "baseUrl": "",
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "maximum": false,
+    "speed": 1
+  },
+  {
+    "id": "m2-root-390-default-s2",
+    "milestone": "m2",
+    "baseUrl": "",
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "maximum": false,
+    "speed": 2
+  },
+  {
+    "id": "m2-root-390-maximum-s0_5",
+    "milestone": "m2",
+    "baseUrl": "",
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "maximum": true,
+    "speed": 0.5
+  },
+  {
+    "id": "m2-root-390-maximum-s1",
+    "milestone": "m2",
+    "baseUrl": "",
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "maximum": true,
+    "speed": 1
+  },
+  {
+    "id": "m2-root-390-maximum-s2",
+    "milestone": "m2",
+    "baseUrl": "",
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "maximum": true,
+    "speed": 2
+  },
+  {
+    "id": "m2-base-1440-default-s0_5",
+    "milestone": "m2",
+    "baseUrl": "/jellyfin",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "maximum": false,
+    "speed": 0.5
+  },
+  {
+    "id": "m2-base-1440-default-s1",
+    "milestone": "m2",
+    "baseUrl": "/jellyfin",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "maximum": false,
+    "speed": 1
+  },
+  {
+    "id": "m2-base-1440-default-s2",
+    "milestone": "m2",
+    "baseUrl": "/jellyfin",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "maximum": false,
+    "speed": 2
+  },
+  {
+    "id": "m2-base-1440-maximum-s0_5",
+    "milestone": "m2",
+    "baseUrl": "/jellyfin",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "maximum": true,
+    "speed": 0.5
+  },
+  {
+    "id": "m2-base-1440-maximum-s1",
+    "milestone": "m2",
+    "baseUrl": "/jellyfin",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "maximum": true,
+    "speed": 1
+  },
+  {
+    "id": "m2-base-1440-maximum-s2",
+    "milestone": "m2",
+    "baseUrl": "/jellyfin",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "maximum": true,
+    "speed": 2
+  },
+  {
+    "id": "m2-base-390-default-s0_5",
+    "milestone": "m2",
+    "baseUrl": "/jellyfin",
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "maximum": false,
+    "speed": 0.5
+  },
+  {
+    "id": "m2-base-390-default-s1",
+    "milestone": "m2",
+    "baseUrl": "/jellyfin",
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "maximum": false,
+    "speed": 1
+  },
+  {
+    "id": "m2-base-390-default-s2",
+    "milestone": "m2",
+    "baseUrl": "/jellyfin",
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "maximum": false,
+    "speed": 2
+  },
+  {
+    "id": "m2-base-390-maximum-s0_5",
+    "milestone": "m2",
+    "baseUrl": "/jellyfin",
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "maximum": true,
+    "speed": 0.5
+  },
+  {
+    "id": "m2-base-390-maximum-s1",
+    "milestone": "m2",
+    "baseUrl": "/jellyfin",
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "maximum": true,
+    "speed": 1
+  },
+  {
+    "id": "m2-base-390-maximum-s2",
+    "milestone": "m2",
+    "baseUrl": "/jellyfin",
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "maximum": true,
+    "speed": 2
+  },
+  {
+    "id": "m1-root",
+    "milestone": "m1",
+    "baseUrl": ""
+  },
+  {
+    "id": "m1-base",
+    "milestone": "m1",
+    "baseUrl": "/jellyfin"
+  }
+]

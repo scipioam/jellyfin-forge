@@ -3,7 +3,7 @@
     "use strict";
     // Kept identical in both entry points: old cached bootstrap can load this player alone.
     function ensureLayout(base) {
-        var version = 'm2-v1', contract = 'm2-speed-v1';
+        var version = 'm2-v2', contract = 'm2-speed-v1';
         var registry = window.__danmukuDependencies || (window.__danmukuDependencies = Object.create(null));
         var key = base + '|' + version + '|' + contract;
         function valid() { return window.DanmukuLayout && window.DanmukuLayout.resourceVersion === version && window.DanmukuLayout.renderVersion === contract; }

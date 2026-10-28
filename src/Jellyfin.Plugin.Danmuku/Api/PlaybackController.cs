@@ -4,8 +4,7 @@ using Jellyfin.Plugin.Danmuku.Configuration;
 using Jellyfin.Plugin.Danmuku.Playback;
 using Jellyfin.Plugin.Danmuku.Storage;
 using MediaBrowser.Controller.Devices;
-using MediaBrowser.Controller.Entities.Movies;
-using MediaBrowser.Controller.Entities.TV;
+using Jellyfin.Plugin.Danmuku.Media;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.Net;
 using Microsoft.AspNetCore.Authorization;
@@ -38,7 +37,7 @@ public sealed class PlaybackController(IAuthorizationContext authorization, ILib
         if (!active.Items.Any(d => d.UserId == user.Id)) return Unauthorized();
         if (user.HasPermission(PermissionKind.IsDisabled) || !user.HasPermission(PermissionKind.EnableMediaPlayback)) return Forbid();
         var item = library.GetItemById(itemId);
-        if (item is not (Movie or Episode) || !item.IsVisibleStandalone(user) || !item.IsParentalAllowed(user, false)) return Forbid();
+        if (item is null || !MediaEligibility.CanBind(item) || !item.IsVisibleStandalone(user) || !item.IsParentalAllowed(user, false)) return Forbid();
         if (configuration.WebEnabled && renderVersion != PlaybackService.RenderVersion)
             throw new ImportOperationException("RenderContractMismatch", 409, "Reload the player to use the current render contract.");
         var identity = new PlaybackIdentity(user.Id.ToString("N"), PlaybackService.SessionHash(auth.Token), itemId.ToString("N"), item.RunTimeTicks is > 0 ? item.RunTimeTicks / TimeSpan.TicksPerMillisecond : null);

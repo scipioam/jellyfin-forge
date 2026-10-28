@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import signal
 import sys
@@ -26,8 +27,12 @@ class M2Instance(Instance):
         self.data = ROOT / "artifacts/m2/integration" / self.project
         self.command = ["docker", "compose", "-f", str(self.data / "compose.json")]
         self.additional_media_names = ["M2-Second.mp4"]
+        self.media_fixture_version = "mb-v1"
 
     def __enter__(self):
+        if self.media_fixture_version:
+            from m2_media import scaffold
+            scaffold(self)
         super().__enter__()
         try:
             second = self.wait(lambda: next((item for item in self.request(
@@ -38,6 +43,9 @@ class M2Instance(Instance):
             credentials = json.loads(credentials_path.read_text())
             credentials["secondItem"] = self.second
             credentials_path.write_text(json.dumps(credentials))
+            if self.media_fixture_version:
+                from m2_media import provision
+                self.media_fixtures = provision(self)
             return self
         except BaseException:
             self.__exit__(None, None, None)
@@ -104,24 +112,43 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", choices=["", "/jellyfin"], default="")
     parser.add_argument("--browser", action="store_true")
+    parser.add_argument("--performance", action="store_true")
+    parser.add_argument("--performance-group")
+    parser.add_argument("--preflight", action="store_true")
     args = parser.parse_args()
+    if args.performance or args.performance_group:
+        from performance import GROUPS, run_group
+        groups = [g for g in GROUPS if g['milestone'] == 'm2' and
+                  (g['id'] == args.performance_group if args.performance_group else g['baseUrl'] == args.base_url)]
+        if not groups:
+            parser.error('unknown M2 performance group')
+        for group in groups:
+            run_group(group, args.preflight)
+        return
     instance = M2Instance(args.base_url)
-    package = ROOT / "artifacts/jellyfin-plugin-danmuku-0.0.2.zip"
+    package = Path(os.environ.get("FORGE_PACKAGE_DIR", ROOT / "artifacts")) / "jellyfin-plugin-danmuku-0.0.2.zip"
     result = {"packageSha256": hashlib.sha256(package.read_bytes()).hexdigest(), "baseUrl": args.base_url,
               "scope": "M2 HTTP and selected browser workflows; not the full acceptance matrix", "status": "failed"}
     try:
         with instance:
             print("Fixture:", instance.data, flush=True)
             instance.plan_http_tests()
+            from m2_http import check_contracts, missing_media
+            check_contracts(instance)
+            from m2_media import contracts
+            contracts(instance, instance.media_fixtures)
             if args.browser:
                 # The HTTP lifecycle leaves the source unbound; explicitly bind it for speed checks.
                 media = "/Danmuku/Media/" + instance.item
                 state = instance.api(media + "/Bindings")
-                file = instance.api("/Danmuku/Files")["items"][0]["fileid"]
+                file = instance.api("/Danmuku/Files?search=m2-source")["items"][0]["fileid"]
                 instance.api(media + "/Bindings", {"expectedVersion": state["version"], "fileIds": [file],
                     "selectionIntent": "set", "selection": {"kind": "file", "id": file}}, "PUT")
                 for engine in ["chromium", "firefox"]:
                     run("node", str(ROOT / "tests/browser/m2.cjs"), str(instance.data), engine)
+            from m2_media import missing_video
+            missing_video(instance, instance.media_fixtures)
+            missing_media(instance, args.browser)
             result.update(status="passed", checks=instance.results)
             print("M2 HTTP and requested browser checks passed", flush=True)
     finally:

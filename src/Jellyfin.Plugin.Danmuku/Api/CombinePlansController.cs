@@ -1,4 +1,5 @@
 using Jellyfin.Plugin.Danmuku.Storage;
+using Jellyfin.Plugin.Danmuku.Media;
 using MediaBrowser.Common.Api;
 using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Authorization;
@@ -9,7 +10,7 @@ namespace Jellyfin.Plugin.Danmuku.Api;
 [ApiController, Route("Danmuku/Media/{itemId}/CombinePlans"), Authorize(Policy = Policies.RequiresElevation), DanmukuErrors]
 [RequestSizeLimit(128 * 1024)]
 public sealed class CombinePlansController(CombinePlanService plans, MediaBindingService bindings,
-    ILibraryManager library) : ControllerBase
+    ILibraryManager library, MediaPresentationService presentation) : ControllerBase
 {
     private static string Id(string value) => Guid.TryParse(value, out var id) ? id.ToString("N") : throw new ArgumentException("Invalid ID.");
     private long? Duration(string media) => library.GetItemById(Guid.Parse(media))?.RunTimeTicks is > 0 and var ticks
@@ -20,9 +21,10 @@ public sealed class CombinePlansController(CombinePlanService plans, MediaBindin
     {
         var media = Id(itemId);
         var state = await bindings.ReadAsync(media, ct).ConfigureAwait(false);
-        // Unavailable media must remain manageable without another library lookup.
-        var duration = state.CheckStatus == "Exists" ? Duration(media) : null;
-        return new { items = plans.List(media), state, defaultName = plans.NextName(media), durationMs = duration };
+        // Presentation lookup failures must not prevent cleanup of unavailable media.
+        var item = presentation.Find(Guid.Parse(media));
+        var duration = state.CheckStatus == "Exists" && item?.RunTimeTicks is > 0 and var ticks ? ticks / TimeSpan.TicksPerMillisecond : (long?)null;
+        return new { items = plans.List(media), state, defaultName = plans.NextName(media), durationMs = duration, media = presentation.Describe(item, Guid.Parse(media)) };
     }
     [HttpGet("{planId}")]
     public async Task<object> Get(string itemId, string planId, CancellationToken ct) =>

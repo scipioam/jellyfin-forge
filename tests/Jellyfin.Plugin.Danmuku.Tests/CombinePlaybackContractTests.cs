@@ -8,6 +8,27 @@ namespace Jellyfin.Plugin.Danmuku.Tests;
 public sealed class CombinePlaybackContractTests
 {
     [Fact]
+    public async Task PlanCacheCapacityExpiryMissingFileAndIdentityCannotResample()
+    {
+        await using var x = new ImportLifecycleTestContext(); var source = await x.PublishAsync("cache");
+        var plans = new CombinePlanService(x.Storage.Factory, x.Writes, x.Bindings, x.Clock);
+        await plans.SaveAsync("media", Guid.NewGuid().ToString("N"), "P", [new(source)], null, true, 1);
+        using var service = new PlaybackService(x.Storage.Factory, x.Writes, x.Storage.Paths, x.Clock, new Sessions(), new(Collections: 1));
+        var first = Guid.NewGuid().ToString("N"); await Read(service, first);
+        var second = Guid.NewGuid().ToString("N");
+        Assert.Equal("PlaybackCapacity", (await Assert.ThrowsAsync<ImportOperationException>(() => Read(service, second))).Code);
+        Assert.Equal(1, x.Scalar("SELECT COUNT(*) FROM PlaybackRequests"));
+        x.Clock.Advance(TimeSpan.FromMinutes(10));
+        Assert.Equal(410, (await Assert.ThrowsAsync<ImportOperationException>(() => Read(service, first))).StatusCode);
+        await Read(service, second);
+        Assert.Equal("PlaybackIdConflict", (await Assert.ThrowsAsync<ImportOperationException>(() => service.GetAsync(second,
+            new("user", "different-session", "media", null), new() { WebEnabled = true }))).Code);
+        File.Delete(Assert.Single(Directory.GetFiles(x.Storage.Paths.PlaybackCachePath, "*.json")));
+        Assert.Equal(410, (await Assert.ThrowsAsync<ImportOperationException>(() => Read(service, second))).StatusCode);
+        Assert.Equal(2, x.Scalar("SELECT COUNT(*) FROM PlaybackRequests"));
+    }
+
+    [Fact]
     public async Task InstancesHaveDistinctIdsAndGlobalLimitAndStableOrder()
     {
         await using var x = new ImportLifecycleTestContext();

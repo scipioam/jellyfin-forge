@@ -188,6 +188,11 @@
                     #DanmukuConfigPage th, #DanmukuConfigPage td { padding: 10px; }
                     #DanmukuConfigPage label { max-width: 100%; box-sizing: border-box; }
                     #DanmukuConfigPage .dm-picker { padding: 10px; }
+                    #DanmukuConfigPage #dm-media-list table { table-layout: fixed; }
+                    #DanmukuConfigPage #dm-media-list td { min-width: 0; }
+                    #DanmukuConfigPage #dm-media-list th:nth-child(2) { width: 5.8em; }
+                    #DanmukuConfigPage #dm-media-list th:nth-child(3) { width: 6em; }
+                    #DanmukuConfigPage #dm-media-list button { margin: 0; max-width: 100%; }
                 }
                 #DanmukuConfigPage .dm-time { width: 125px; max-width: none; font-variant-numeric: tabular-nums; }
                 #DanmukuConfigPage #dm-plan-editor pre { white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -195,6 +200,11 @@
                 #DanmukuConfigPage input[type="checkbox"] { accent-color: #00a4dc; width: 18px; height: 18px; vertical-align: middle; }
                 #DanmukuConfigPage :is(input,select,button):focus-visible { outline: 2px solid #00a4dc; outline-offset: 3px; }
                 #DanmukuConfigPage :disabled { opacity: .55; cursor: not-allowed; }
+                #DanmukuConfigPage .dm-media-title, #DanmukuConfigPage .dm-binding-title { overflow-wrap: anywhere; }
+                #DanmukuConfigPage .dm-media-location { white-space: pre-line; overflow-wrap: anywhere; max-width: 42rem; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; opacity: .8; font-size: .9em; }
+                #DanmukuConfigPage .dm-media-details { max-width: 42rem; white-space: pre-wrap; overflow-wrap: anywhere; font-size: .9em; }
+                #DanmukuConfigPage .dm-media-details summary { cursor: pointer; }
+                #DanmukuConfigPage .dm-media-details summary:focus-visible { outline: 2px solid #00a4dc; outline-offset: 2px; }
             </style>
             <script>
                 (function () {
@@ -203,11 +213,23 @@
                         pluginId = "6f79690c-c1d0-4738-b241-09aaa2c570e7",
                         selected = null,
                         state = null,
-                        selectedName = "", bindingGeneration = 0, pickerGeneration = 0, mediaGeneration = 0, fileGeneration = 0, taskGeneration = 0,
+                        selectedMedia = null, bindingGeneration = 0, pickerGeneration = 0, mediaGeneration = 0, fileGeneration = 0, taskGeneration = 0,
                         timer = null,
                         alive = false,
                         tab = "media",
                         taskStart = 0, editor = null, editorSerial = 0;
+                    function renderMedia(host, item, heading) {
+                        var main = document.createElement(heading ? "h3" : "div");
+                        main.className = heading ? "dm-binding-title" : "dm-media-title";
+                        main.textContent = item.displayTitle || item.name || item.id || item.mediaId;
+                        host.appendChild(main);
+                        var location = item.locationText || item.id || item.mediaId;
+                        var auxiliary = document.createElement("div"); auxiliary.className = "dm-media-location";
+                        auxiliary.textContent = location; host.appendChild(auxiliary);
+                        var details = document.createElement("details"); details.className = "dm-media-details";
+                        var summary = document.createElement("summary"); summary.textContent = "完整位置"; details.appendChild(summary);
+                        var full = document.createElement("div"); full.textContent = location; details.appendChild(full); host.appendChild(details);
+                    }
                     function $(id) {
                         return page.querySelector("#" + id);
                     }
@@ -499,8 +521,11 @@
                                 return media(s, parent, abnormal);
                             },
                             function (r, item) {
-                                cell(r, 0, item.name || item.mediaId);
+                                cell(r, 0, ""); renderMedia(r.children[0], item, false);
                                 cell(r, 1, item.type || item.checkStatus);
+                                if (!item.canBind && !abnormal && !item.canNavigate) {
+                                    cell(r, 2, "不支持绑定"); return;
+                                }
                                 button(
                                     item.canBind || abnormal
                                         ? "管理绑定"
@@ -508,7 +533,7 @@
                                     async function () {
                                         if (item.canBind || abnormal) {
                                             if (!closeEditor()) return;
-                                            selected = item.id || item.mediaId; selectedName = item.name || selected;
+                                            selected = item.id || item.mediaId; selectedMedia = item;
                                             await bindings();
                                         } else await media(0, item.id, false);
                                     },
@@ -541,7 +566,8 @@
                         var files = await Promise.all(snapshot.fileIds.map(function (id) { return req("Files/" + encodeURIComponent(id)); }));
                         if (!alive || selected !== mediaId || generation !== bindingGeneration) return;
                         state = snapshot;
-                        var title = document.createElement("h3"); title.className = "dm-binding-title"; title.textContent = selectedName || mediaId; host.appendChild(title);
+                        selectedMedia = planData.media && planData.media.id === mediaId ? planData.media : selectedMedia;
+                        renderMedia(host, selectedMedia || { id: mediaId }, true);
                         var activePlan = planData.items.find(function (p) { return p.planId === snapshot.activePlanId; });
                         line(host, "当前：" + (activePlan ? "合并方案：" + activePlan.name : snapshot.activeFileId ? "单文件：" + (files.find(function (f) { return f.fileId === snapshot.activeFileId; }) || {}).storedFileName : snapshot.isDeactivated ? "已停用" : "未选择") + " · 时长：" + (planData.durationMs == null ? "未知" : formatTime(planData.durationMs)));
                         line(host, "变更在下次播放生效。解除绑定保留文件；替换仅影响单文件绑定，不改变方案来源。").className = "dm-help";
@@ -770,7 +796,8 @@
                         var result = await req("Files?startIndex=" + start + "&limit=50&search=" + encodeURIComponent(search));
                         if (!alive || context !== state || selected !== context.mediaId || generation !== pickerGeneration || !host.isConnected) return;
                         host.replaceChildren(); host.className = "dm-picker";
-                        line(host, "为“" + (selectedName || selected) + "”选择已有文件");
+                        line(host, "为当前媒体选择已有文件");
+                        renderMedia(host, selectedMedia || { id: selected }, false);
                         var label = document.createElement("label"); label.textContent = "文件名 ";
                         var input = document.createElement("input"); input.type = "search"; input.value = search; input.id = "dm-picker-search"; label.appendChild(input); host.appendChild(label);
                         button("查找文件", function () { return picker(0, input.value, context); }, host);

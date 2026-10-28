@@ -1,5 +1,6 @@
 using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.Danmuku.Import;
+using Jellyfin.Plugin.Danmuku.Media;
 using Jellyfin.Plugin.Danmuku.Storage;
 using MediaBrowser.Common.Api;
 using MediaBrowser.Controller.Entities;
@@ -41,7 +42,7 @@ public sealed class DanmukuErrorsAttribute : ActionFilterAttribute, IExceptionFi
 
 [ApiController, Route("Danmuku"), Authorize(Policy = Policies.RequiresElevation), DanmukuErrors]
 public sealed class ManagementController(ManagementQueries queries, ImportService imports, MediaBindingService bindings,
-    IFileDeletionCoordinator deletion, IPublishFileStore files, ILibraryManager library) : ControllerBase
+    IFileDeletionCoordinator deletion, IPublishFileStore files, ILibraryManager library, MediaPresentationService presentation) : ControllerBase
 {
     private static string MediaId(string value) => Guid.TryParse(value, out var id) ? id.ToString("N") : throw new ArgumentException("Invalid media id.");
 
@@ -79,14 +80,26 @@ public sealed class ManagementController(ManagementQueries queries, ImportServic
     public object Media(string? search = null, Guid? parentId = null, bool abnormal = false, int startIndex = 0, int limit = 50)
     {
         ManagementQueries.ValidatePage(startIndex, limit);
-        if (abnormal) return queries.AbnormalMedia(startIndex, limit);
+        if (abnormal)
+        {
+            var page = queries.AbnormalMedia(startIndex, limit);
+            foreach (var row in page.Items)
+            {
+                var description = presentation.Describe(Guid.Parse((string)row["MediaId"]!));
+                row["DisplayTitle"] = description.DisplayTitle;
+                row["LocationText"] = description.LocationText;
+                row["CanBind"] = description.CanBind;
+                row["CanNavigate"] = false;
+            }
+            return page;
+        }
         var result = library.GetItemsResult(new InternalItemsQuery
         {
             SearchTerm = search, ParentId = parentId ?? Guid.Empty, Recursive = parentId is null,
-            IncludeItemTypes = [BaseItemKind.Movie, BaseItemKind.Episode, BaseItemKind.Series, BaseItemKind.Season],
+            IncludeItemTypes = [BaseItemKind.Movie, BaseItemKind.Episode, BaseItemKind.Video, BaseItemKind.Series, BaseItemKind.Season],
             StartIndex = startIndex, Limit = limit, EnableTotalRecordCount = true
         });
-        return new { items = result.Items.Select(i => new { id = i.Id.ToString("N"), name = i.Name, type = i.GetType().Name, canBind = i is MediaBrowser.Controller.Entities.Movies.Movie or MediaBrowser.Controller.Entities.TV.Episode }), totalCount = result.TotalRecordCount, startIndex, limit };
+        return new { items = result.Items.Select(i => presentation.Describe(i)).ToArray(), totalCount = result.TotalRecordCount, startIndex, limit };
     }
     [HttpGet("Media/{itemId}/Bindings")]
     public Task<MediaBindingSnapshot> ReadBindings(string itemId, CancellationToken ct) => bindings.ReadAsync(MediaId(itemId), ct);

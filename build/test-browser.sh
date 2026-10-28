@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 source "$(dirname -- "$0")/common.sh"
-export DOTNET_PROCESSOR_COUNT="${DOTNET_PROCESSOR_COUNT:-1}" MSBUILDDISABLENODEREUSE=1 UseSharedCompilation=false
+export MSBUILDDISABLENODEREUSE=1 UseSharedCompilation=false
 milestone=m1
 browser_args=()
 while [[ $# -gt 0 ]]; do

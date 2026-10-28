@@ -87,7 +87,7 @@ def upload_draft(root, tag, artifacts, repository):
             run_link = f"https://github.com/{repository}/actions/runs/{run_id}" if run_id.isdigit() else ""
             notes.write_text(
                 f"Danmuku {version}\n\n"
-                "适用于 Jellyfin Server 12.1 / .NET 10。\n\n"
+                "适用于 Jellyfin Server 12.4 / .NET 10。\n\n"
                 "附件为完整常规 CI 验证使用的同一份 ZIP 和 SHA-256 校验文件。"
                 "外部私有样本、按需性能长测及人工平台验收不包含在此发布门禁中。\n\n"
                 "这是自动生成的草稿，请确认说明和附件后手动发布。\n\n"

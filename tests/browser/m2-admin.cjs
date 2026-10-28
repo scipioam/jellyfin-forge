@@ -9,6 +9,7 @@ module.exports = async function ({ page, dir, engine, item, secondItem }) {
     // Two actual library videos: a late A preview must never appear in B.
     assert(secondItem && secondItem !== item);
     await page.getByRole('button', { name: '新建合并方案', exact: true }).click();
+    await page.getByRole('searchbox', { name: '来源文件搜索', exact: true }).fill('m2-source');
     await page.getByRole('button', { name: '查找来源文件', exact: true }).click();
     let entered, release;
     const pending = new Promise(resolve => { entered = resolve; });
@@ -30,6 +31,7 @@ module.exports = async function ({ page, dir, engine, item, secondItem }) {
     const editor = page.locator('#dm-plan-editor');
     const name = await editor.getByRole('textbox', { name: '方案名称', exact: true }).inputValue();
     assert.match(name, /^combine-\d+$/);
+    await editor.getByRole('searchbox', { name: '来源文件搜索', exact: true }).fill('m2-source');
     await editor.getByRole('button', { name: '查找来源文件', exact: true }).click();
     await editor.getByRole('button', { name: '添加片段', exact: true }).first().click();
     await editor.getByRole('textbox', { name: '片段 1 源开始', exact: true }).fill('10:00');
@@ -41,6 +43,13 @@ module.exports = async function ({ page, dir, engine, item, secondItem }) {
     assert.equal(await editor.getByRole('textbox', { name: '片段 2 视频起点', exact: true }).inputValue(), '30:00');
     await editor.getByRole('button', { name: '撤销范围同步', exact: true }).click();
     assert.equal(await editor.getByRole('textbox', { name: '片段 2 源开始', exact: true }).inputValue(), '00:00');
+    await editor.getByRole('button', { name: '上移', exact: true }).last().click();
+    assert.equal(await editor.getByRole('textbox', { name: '片段 1 视频起点', exact: true }).inputValue(), '30:00');
+    await editor.getByRole('button', { name: '下移', exact: true }).first().click();
+    assert.equal(await editor.getByRole('textbox', { name: '片段 1 视频起点', exact: true }).inputValue(), '20:00');
+    await editor.getByRole('button', { name: '将此范围应用到全部', exact: true }).first().click();
+    await editor.getByRole('textbox', { name: '片段 2 视频起点', exact: true }).fill('31:00');
+    assert(await editor.getByRole('button', { name: '撤销范围同步', exact: true }).isDisabled());
     await editor.getByRole('button', { name: '移除片段', exact: true }).last().click();
     await editor.getByRole('button', { name: '保存并启用', exact: true }).waitFor();
     await page.waitForFunction(() => !document.querySelector('#dm-plan-editor button.dm-primary').disabled);
@@ -59,7 +68,11 @@ module.exports = async function ({ page, dir, engine, item, secondItem }) {
     await page.locator('#dm-plan-editor').waitFor({ state: 'detached' });
     await page.locator('#dm-binding').getByText('当前：合并方案：' + engine + '-renamed', { exact: false }).waitFor();
     await page.setViewportSize({ width: 1440, height: 900 });
+    const checks = await require('./m2-admin-acceptance.cjs')({ page, dir, engine, item, secondItem });
+    checks.push('same-file rows reorder both directions; later segment edit expires range undo');
+    checks.push(...await require('./m2-admin-themes.cjs')({ page, dir, engine, item }));
     await page.evaluate(() => { location.hash = '/home'; });
     await page.locator('.homePage .card[data-id]').first().waitFor();
     await page.waitForLoadState('networkidle');
+    return checks;
 };

@@ -8,6 +8,22 @@ function make(items, changes = {}, size = [40, 20]) {
 }
 function finish(l, time) { while (!l.advance(time, () => 0)) {} return l.snapshot(time); }
 const item = (timeMs, mode = 1) => ({ timeMs, mode });
+test('optimized layout preserves frozen M2 decisions across modes, speeds and mixed sizes', () => {
+    const reference = require('./fixtures/reference-layout-m2-original.cjs');
+    const items = Array.from({ length: 1200 }, (_, i) => item(Math.floor(i / 10) * 113, [1, 1, 4, 5][i % 4]));
+    for (const mode of ['low', 'medium', 'high', 'overlap']) for (const scrollSpeed of [.5, 1, 1.3, 2]) for (const width of [8, 390, 1440]) {
+        const options = { mode, scrollSpeed, width, height: 810, area: 75, limit: 600 };
+        const actual = layout.create(items, options), expected = reference.create(items, options);
+        items.forEach((_, i) => { for (const l of [actual, expected]) l.measure(i, 15 + (i * 97 % 600), 18 + (i % 5) * 6.25); });
+        for (const time of [0, 4113, 9000, 15000]) {
+            assert.deepEqual(finish(actual, time), finish(expected, time), JSON.stringify(options));
+        }
+        assert.deepEqual(actual.decisions, expected.decisions);
+        assert.deepEqual(actual.ys, expected.ys);
+        assert.deepEqual(actual.dropped, expected.dropped);
+        assert(actual.bytes + items.length * 33 <= 2 * 1024 * 1024);
+    }
+});
 test('low/medium reserve the full box at entry, reject without consuming, release at end', () => {
     for (const [mode, accepted] of [['low', 2], ['medium', 3], ['high', 5]]) {
         const l = make(Array.from({ length: 6 }, () => item(0, 5)).concat(item(4000, 5)), { mode }, [100, 20]);

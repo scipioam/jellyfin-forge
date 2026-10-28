@@ -2,7 +2,7 @@
 
 本页是正式部署的操作入口。Danmuku 和 AgentBridge 可分别安装、升级和卸载；正式实例与仓库开发环境独立。`build/*-dev.sh` 和 [开发 Compose](docker/dev/README.md) 只用于隔离测试，不能用于管理正式实例。
 
-当前插件基线为 **Jellyfin Server 12.1 / .NET 10**，不要直接套用其他版本或 `latest` 镜像。Danmuku 0.0.2 包含 M2 合并方案和滚动速度功能，完整性能及人工验收尚未完成，详见 [M2 验证记录](../docs/SpecAndPlan/M2-Danmuku-Validation.md)。AgentBridge 当前提供插件骨架、配置页及管理员 health API。
+当前插件基线为 **Jellyfin Server 12.4 / .NET 10**，不要直接套用其他版本或 `latest` 镜像。Danmuku 0.0.2 包含 M2 合并方案、滚动速度及电影／单集／普通独立视频绑定，新增范围与 12.4 兼容回归已通过，人工验收待完成；12.4 未重跑完整长时性能矩阵，历史性能结果与本轮覆盖边界详见 [M2 验证记录](../docs/SpecAndPlan/M2-Danmuku-Validation.md)。AgentBridge 当前提供插件骨架、配置页及管理员 health API。
 
 ## Docker 生产部署
 
@@ -25,7 +25,7 @@ cp .env.example .env
 
 | 配置 | 用途 |
 | --- | --- |
-| `JELLYFIN_IMAGE` | 与插件匹配的镜像，默认 `jellyfin/jellyfin:12.1`；部署前拉取并记录镜像摘要，建议改为经过验证的 `jellyfin/jellyfin@sha256:…` |
+| `JELLYFIN_IMAGE` | 与插件匹配的镜像，默认 `jellyfin/jellyfin:12.4`；部署前拉取并记录镜像摘要，建议改为经过验证的 `jellyfin/jellyfin@sha256:…` |
 | `JELLYFIN_UID` / `JELLYFIN_GID` | 目标非 root 服务账号的数字 UID/GID，可用 `id <服务账号>` 查询 |
 | `JELLYFIN_CONFIG_DIR` | 独立持久配置目录，含服务器数据库、账号、插件程序、插件配置和弹幕业务数据 |
 | `JELLYFIN_CACHE_DIR` | 独立缓存目录，可写 |

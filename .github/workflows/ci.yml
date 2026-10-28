@@ -127,7 +127,7 @@ jobs:
       - run: npm ci --prefix tests/browser
       - run: cd tests/browser && npx playwright install --with-deps chromium firefox
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg
-      - run: docker pull jellyfin/jellyfin:12.1
+      - run: docker pull jellyfin/jellyfin:12.4
       - run: python3 -m unittest discover -s tests/integration -p 'test_*.py'
       - run: node --test tests/browser/danmuku-layout.test.cjs
       - run: python3 tests/integration/m1.py --browser
@@ -156,11 +156,25 @@ jobs:
             artifacts/m2/integration/*/server.log
             artifacts/m2/integration/*/*-m2-*.png
           if-no-files-found: ignore
+  performance-manifest:
+    if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'performance' || inputs.suite == 'all')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.groups.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: groups
+        run: echo "matrix=$(python3 tests/integration/performance.py --matrix)" >> "$GITHUB_OUTPUT"
   danmuku-performance:
-    needs: standalone
+    needs: [standalone, performance-manifest]
     if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'performance' || inputs.suite == 'all')
     runs-on: ubuntu-24.04
     timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.performance-manifest.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -178,17 +192,40 @@ jobs:
       - run: npm ci --prefix tests/browser
       - run: cd tests/browser && npx playwright install --with-deps chromium
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg
-      - run: docker pull jellyfin/jellyfin:12.1
-      - run: python3 tests/integration/m1.py --performance
+      - run: docker pull jellyfin/jellyfin:12.4
+      - name: Run one complete performance group
+        env:
+          PERFORMANCE_GROUP: ${{ matrix.group }}
+        run: python3 tests/integration/performance.py --group "$PERFORMANCE_GROUP"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: danmuku-performance-results
+          name: danmuku-performance-${{ matrix.group }}
           path: |
-            artifacts/m1/integration/**/*-performance.json
-            artifacts/m1/integration/**/performance-progress.json
-            artifacts/m1/integration/**/server.log
-            artifacts/m1/integration/**/*-failure.json
+            artifacts/m2/performance/*/*-performance.json
+            artifacts/m2/performance/*/performance-progress.json
+            artifacts/m2/performance/*/server.log
+            artifacts/m2/performance/*/*-failure.json
+            artifacts/m2/performance/*/*-failure.png
+          if-no-files-found: error
+  performance-summary:
+    needs: danmuku-performance
+    if: always() && github.event_name == 'workflow_dispatch' && (inputs.suite == 'performance' || inputs.suite == 'all')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: danmuku-performance-*
+          path: artifacts/performance-download
+      - run: python3 tests/integration/performance.py --summarize artifacts/performance-download
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: performance-summary
+          path: artifacts/m2/performance-summary.json
+          if-no-files-found: error
   danmuku-release-draft:
     needs: [standalone, smoke, danmuku-integration]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/danmuku-v')

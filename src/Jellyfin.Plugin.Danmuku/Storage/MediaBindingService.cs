@@ -1,7 +1,6 @@
 using System.Text.Json.Serialization;
 using MediaBrowser.Controller.Library;
-using MediaBrowser.Controller.Entities.Movies;
-using MediaBrowser.Controller.Entities.TV;
+using Jellyfin.Plugin.Danmuku.Media;
 using Microsoft.Data.Sqlite;
 using static Jellyfin.Plugin.Danmuku.Storage.ImportSql;
 
@@ -22,7 +21,7 @@ public sealed class JellyfinMediaPresenceLookup(ILibraryManager library) : IMedi
         if (!Guid.TryParse(mediaId, out var id)) return Task.FromResult(MediaPresence.Missing);
         try
         {
-            return Task.FromResult(library.GetItemById(id) is Movie or Episode ? MediaPresence.Exists : MediaPresence.Missing);
+            return Task.FromResult(MediaEligibility.CanBind(library.GetItemById(id)) ? MediaPresence.Exists : MediaPresence.Missing);
         }
         catch (Exception) { return Task.FromResult(MediaPresence.CheckFailed); }
     }

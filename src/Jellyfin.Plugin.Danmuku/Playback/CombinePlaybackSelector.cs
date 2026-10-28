@@ -83,30 +83,44 @@ public static class CombinePlaybackSelector
 
         void Scan(Action<Candidate> visit)
         {
-            // One bounded UNION of at most 50 parameterized ranges per scan, never one scan per minute.
+            // Read each source row once per pass, then expand matching segment
+            // instances numerically. Repeated references must not repeat SQLite
+            // marshaling; they still count and hash as separate candidates.
             using var cmd = c.CreateCommand(); cmd.Transaction = t;
             var clauses = new List<string>();
-            for (var i = 0; i < plan.Segments.Count; i++)
+            var sources = plan.Segments.Select((segment, ordinal) => (segment, ordinal))
+                .GroupBy(x => x.segment.FileId, StringComparer.Ordinal).Select(g => g.ToArray()).ToArray();
+            for (var file = 0; file < sources.Length; file++)
             {
-                var row = plan.Segments[i];
-                clauses.Add($"SELECT {i} AS SegmentOrdinal,CommentId,SourceOrdinal,TimeMs FROM Comments WHERE FileId=$file{i} AND TimeMs >= $start{i} AND ($end{i} IS NULL OR TimeMs < $end{i})");
-                cmd.Parameters.AddWithValue($"$file{i}", row.FileId);
-                cmd.Parameters.AddWithValue($"$start{i}", row.SourceStartMs);
-                cmd.Parameters.AddWithValue($"$end{i}", (object?)row.SourceEndMs ?? DBNull.Value);
+                var ranges = new List<string>();
+                foreach (var (segment, ordinal) in sources[file])
+                {
+                    ranges.Add($"(TimeMs >= $start{ordinal} AND ($end{ordinal} IS NULL OR TimeMs < $end{ordinal}))");
+                    cmd.Parameters.AddWithValue($"$start{ordinal}", segment.SourceStartMs);
+                    cmd.Parameters.AddWithValue($"$end{ordinal}", (object?)segment.SourceEndMs ?? DBNull.Value);
+                }
+                clauses.Add($"SELECT {file},CommentId,SourceOrdinal,TimeMs FROM Comments WHERE FileId=$file{file} AND (" + string.Join(" OR ", ranges) + ")");
+                cmd.Parameters.AddWithValue($"$file{file}", sources[file][0].segment.FileId);
             }
             cmd.CommandText = string.Join(" UNION ALL ", clauses);
             using var cancellation = ct.Register(cmd.Cancel);
             using var reader = cmd.ExecuteReader();
-            long passCount = 0;
+            long passCount = 0, sourceCount = 0;
             while (reader.Read())
             {
-                if ((passCount++ & 1023) == 0) ct.ThrowIfCancellationRequested();
-                scanned++;
-                if (passCount > 1_000_000) throw new ImportOperationException("CommentLimit", 422, "The plan exceeds its candidate limit.");
-                var row = reader.GetInt32(0);
-                var time = CombinePlanService.Map(plan.Segments[row], reader.GetInt64(3));
-                if (durationMs is null || time <= durationMs)
-                    visit(new(reader.GetInt64(1), reader.GetInt64(2), row, time));
+                if ((sourceCount++ & 255) == 0) ct.ThrowIfCancellationRequested();
+                var source = reader.GetInt32(0);
+                var sourceTime = reader.GetInt64(3);
+                var id = reader.GetInt64(1);
+                var ordinal = reader.GetInt64(2);
+                foreach (var (segment, row) in sources[source])
+                {
+                    if (sourceTime < segment.SourceStartMs || (segment.SourceEndMs is long end && sourceTime >= end)) continue;
+                    scanned++;
+                    if (++passCount > 1_000_000) throw new ImportOperationException("CommentLimit", 422, "The plan exceeds its candidate limit.");
+                    var time = CombinePlanService.Map(segment, sourceTime);
+                    if (durationMs is null || time <= durationMs) visit(new(id, ordinal, row, time));
+                }
             }
         }
     }

@@ -7,7 +7,7 @@ A personal collection of independently deployable Jellyfin plugins.
 - **Danmuku** — 弹幕导入、标准化、存储、绑定、有限集合筛选、管理页面、业务 REST API 和播放器扩展的独立插件。
 - **AgentBridge** — Jellyfin 与外部 Agent / Otter 之间的稳定适配层，预留媒体库、受控 metadata/tag 写入、事件及播放状态接口；不负责 AI 推理。
 
-Danmuku M1 已实现 XML/JSON 导入、独立 SQLite 存储、文件与媒体绑定管理、有限播放集合和 Web Canvas 展示；阶段验证与人工验收状态见 [M1 验证记录](docs/SpecAndPlan/M1-Danmuku-Validation.md)。M2 已加入合并方案、片段时间映射和滚动速度设置，当前仍在验证中，尚未完成正式验收，见 [M2 验证记录](docs/SpecAndPlan/M2-Danmuku-Validation.md)。AgentBridge 当前仍为独立工程骨架、配置页和管理员 health API。
+Danmuku M1 已实现 XML/JSON 导入、独立 SQLite 存储、文件与媒体绑定管理、有限播放集合和 Web Canvas 展示；阶段验证与人工验收状态见 [M1 验证记录](docs/SpecAndPlan/M1-Danmuku-Validation.md)。M2 已加入合并方案、片段时间映射、滚动速度设置，以及电影／单集／普通独立视频的绑定和媒体识别信息展示；新增范围及 12.4 升级的必要自动化已通过，人工验收待完成，具体覆盖与性能验证边界见 [M2 验证记录](docs/SpecAndPlan/M2-Danmuku-Validation.md)。AgentBridge 当前仍为独立工程骨架、配置页和管理员 health API。
 
 两个插件分别拥有 GUID、配置、版本和发布包，可以独立安装、升级、卸载和运行；不互相引用或调用，不共享数据库、配置或生命周期，不建立 Core Plugin。未来 Otter 如需弹幕能力，应分别调用两个插件。
 
@@ -16,7 +16,7 @@ Jellyfin Server 不属于本仓库，不维护 Server fork，当前也不维护 
 ## 技术基线
 
 - 开发脚本使用 Bash；Docker 用于标准化开发和集成测试。正式 Jellyfin 实例可以独立部署在其他主机。
-- Jellyfin Server **12.1**；`Jellyfin.Controller` / `Jellyfin.Model` **12.1.0**；`net10.0`。
+- Jellyfin Server **12.4**；`Jellyfin.Controller` / `Jellyfin.Model` **12.4.0**；`net10.0`。
 - .NET SDK **10.0.100+**（`global.json` 允许同主次版本 feature band 向前滚动）。
 - 构建和测试工具：.NET SDK、Bash、Python 3；容器集成测试另需 Docker 和 Docker Compose。
 - NuGet 使用提交的 lock file；有意升级依赖时执行 `dotnet restore jellyfin-forge.sln --force-evaluate` 并审查 lock diff。

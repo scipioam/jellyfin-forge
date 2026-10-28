@@ -23,7 +23,7 @@ manifest = {
     "description": xml.findtext(".//Description"),
     "owner": "scipioam",
     "version": xml.findtext(".//AssemblyVersion"),
-    "targetAbi": "12.1.0.0",
+    "targetAbi": "12.4.0.0",
     "status": "Active",
     "autoUpdate": False,
 }
@@ -214,8 +214,8 @@ def package_danmuku(archive):
     validate_danmuku_archive(archive)
 
 
-out = root / "artifacts"
-out.mkdir(exist_ok=True)
+out = Path(os.environ.get("FORGE_PACKAGE_DIR", root / "artifacts"))
+out.mkdir(parents=True, exist_ok=True)
 archive = out / f"jellyfin-plugin-{key}-{version}.zip"
 if key == "danmuku":
     package_danmuku(archive)

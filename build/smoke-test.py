@@ -16,9 +16,11 @@ import uuid
 import xml.etree.ElementTree as ET
 import zipfile
 
+from test_resources import compose_limits
+
 ROOT = Path(__file__).resolve().parents[1]
 NAMES = ('Danmuku', 'AgentBridge')
-IMAGE = 'jellyfin/jellyfin:12.1'
+IMAGE = 'jellyfin/jellyfin:12.4'
 
 
 def run(*args, **kwargs):
@@ -77,12 +79,12 @@ def scenario(names):
         xml = ET.parse(ROOT / f'src/Jellyfin.Plugin.{name}/Jellyfin.Plugin.{name}.csproj')
         ids[name] = xml.findtext('.//PluginGuid')
         version = xml.findtext('.//Version')
-        with zipfile.ZipFile(ROOT / f'artifacts/jellyfin-plugin-{name.lower()}-{version}.zip') as archive:
+        with zipfile.ZipFile(Path(os.environ.get('FORGE_PACKAGE_DIR', ROOT / 'artifacts')) / f'jellyfin-plugin-{name.lower()}-{version}.zip') as archive:
             archive.extractall(data / 'config/plugins' / name)
     compose = data / 'compose.json'
     compose.write_text(json.dumps({'name': project, 'services': {'jellyfin': {
         'image': IMAGE, 'user': f'{os.getuid()}:{os.getgid()}',
-        'cpus': 1, 'mem_limit': '1g', 'environment': {'DOTNET_PROCESSOR_COUNT': '1'},
+        **compose_limits(),
         'ports': ['127.0.0.1:18096:8096'],
         'volumes': [f'{data}/config:/config', f'{data}/cache:/cache', f'{data}/media:/media:ro'],
     }}}))

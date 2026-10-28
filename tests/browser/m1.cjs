@@ -261,7 +261,14 @@ async function control(page, label, value) {
         .click({ force: true });
 }
 async function checkControlPlacement(page) {
-    await page.locator("video").first().hover({ force: true });
+    const video = page.locator("video").first();
+    const box = await video.boundingBox();
+    assert(box, "video must have a visible viewport");
+    // Moving to the same position can leave the native OSD auto-hidden.
+    // Generate a real pointer movement and wait for the control before measuring.
+    await page.mouse.move(box.x + box.width / 4, box.y + box.height / 2);
+    await video.hover({ force: true });
+    await page.locator('.danmuku-controls button[aria-label="弹幕设置"]').waitFor({ state: "visible" });
     const placement = await page
         .locator(".danmuku-controls")
         .evaluate((root) => {
@@ -290,7 +297,7 @@ async function checkControlPlacement(page) {
     );
     assert(
         placement.iconWidth >= 20 && placement.iconWidth <= 40,
-        "icon must match native control scale",
+        "icon must match native control scale: " + JSON.stringify(placement),
     );
     if (placement.favoriteVisible)
         assert(
@@ -1036,6 +1043,11 @@ function p95(values) {
                     assertLatency(record.load, 2000);
                     record.loadP95 = p95(record.load.map(s => s.elapsed));
                     await play(page);
+                    // Native playback and the overlay can commit before the
+                    // periodic settings attachment. Wait outside all measured
+                    // operations before directly dispatching control events.
+                    await page.locator('.danmuku-panel select[aria-label="区域"]').waitFor({ state: 'attached' });
+                    await page.locator('.danmuku-panel select[aria-label="字号"]').waitFor({ state: 'attached' });
                     await page.locator('video').first().evaluate(v => v.pause());
                     for (let i = 0; i < 20; i++) {
                         record.seek.push(await page.evaluate(i => measureDensityOperation('seek', () => {

@@ -27,8 +27,11 @@ function redact(value) {
         return route.continue();
     });
     const page = await context.newPage();
-    const errors = [];
-    page.on('pageerror', e => errors.push(redact(e.message)));
+    const errors = [], consoleMessages = [];
+    page.on('pageerror', e => errors.push(redact(e.stack || e.message)));
+    page.on('console', message => {
+        if (['warning', 'error'].includes(message.type())) consoleMessages.push({ level: message.type(), text: redact(message.text()) });
+    });
     try {
         result.browser = browser.version();
         await page.addInitScript(installObserver);
@@ -38,13 +41,19 @@ function redact(value) {
         await page.locator('button[type=submit]').first().click();
         await page.waitForURL('**/#/home');
         await page.locator('.homePage .card[data-id]').first().waitFor();
-        await page.waitForLoadState('networkidle');
-        await require('./m2-admin.cjs')({ page, dir, engine, item, secondItem: credentials.secondItem });
-        await page.evaluate(id => { location.hash = '/details?id=' + id; }, item);
-        await page.locator('button.btnPlay:not(.hide), button[title="Play"]:not(.hide), button[title="Resume"]:not(.hide)').first().click();
-        await page.waitForFunction(() => window.DanmukuM1?.metrics.selected > 0 && DanmukuM1.operation?.phase === 'committed', undefined, { timeout: 60000 });
+        // Jellyfin can keep native requests active after the home page is usable.
+        // Wait for the authenticated plugin entry needed by these workflows.
+        await page.waitForFunction(() => window.ApiClient?.getCurrentUserId() && window.DanmukuM1?.metrics.timers === 1);
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        result.admin = await require('./m2-admin.cjs')({ page, dir, engine, item, secondItem: credentials.secondItem });
+        console.log(engine + ': M2 admin workflows passed');
+        result.media = await require('./m2-media.cjs')({ page, dir, engine });
+        console.log(engine + ': MB media workflows passed');
+        await require('./m2-support.cjs')(dir).play(page, item);
         await page.locator('video').first().evaluate(v => v.pause());
-        await page.locator('button[aria-label="弹幕设置"]').click({ force: true });
+        await page.mouse.move(600, 500);
+        await page.locator('button[aria-label="弹幕设置"]').waitFor({ state: 'visible' });
+        await page.locator('button[aria-label="弹幕设置"]').click();
         for (const width of [1440, 390]) {
             await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
             await page.evaluate(async () => {
@@ -67,7 +76,12 @@ function redact(value) {
             assert(geometry.labelHeight < 25 && !geometry.overflow, 'speed label and slider fit on one line');
             await page.screenshot({ path: path.join(dir, engine + '-m2-speed-' + width + '.png') });
         }
-        assert.equal(errors.length, 0, errors.join('\n'));
+        result.speedAcceptance = await require('./m2-speed-acceptance.cjs')({ page, dir });
+        console.log(engine + ': M2 speed workflows passed');
+        result.cache = await require('./m2-cache.cjs')({ page, dir, engine });
+        console.log(engine + ': M2 cache combinations passed');
+        result.nativeNavigationCancellations = errors.filter(e => e.includes('CancelledError') && e.includes('tanstack.query-core.bundle.js') && !e.includes('/Danmuku/'));
+        assert.deepEqual(errors.filter(e => !result.nativeNavigationCancellations.includes(e)), []);
         result.title = await page.title(); result.url = new URL(page.url()).pathname;
         assert(result.title.length > 0); result.status = 'passed';
     } catch (e) {
@@ -76,6 +90,7 @@ function redact(value) {
         await page.screenshot({ path: path.join(dir, engine + '-m2-failure.png') }).catch(() => {});
         throw e;
     } finally {
+        result.consoleMessages = consoleMessages;
         fs.writeFileSync(path.join(dir, engine + '-m2-browser.json'), JSON.stringify(result, null, 2));
         await browser.close();
     }

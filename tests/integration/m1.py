@@ -20,6 +20,9 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "build"))
+from test_resources import compose_limits
+
 PLUGIN = "6f79690c-c1d0-4738-b241-09aaa2c570e7"
 AUTH = (
     'MediaBrowser Client="M1", Device="Test", DeviceId="forge-m1-http", Version="0.0.1"'
@@ -45,6 +48,8 @@ class Instance:
         self.restore = []
         self.results = []
         self.additional_media_names = []
+        self.additional_volumes = []
+        self.package_path = None
 
     def request(
         self, path, body=None, token=None, method=None, expected=200, raw=False
@@ -86,6 +91,27 @@ class Instance:
             time.sleep(1)
         raise TimeoutError("Fixture condition timed out")
 
+    def scan_library(self, name=None):
+        def idle():
+            return not any(
+                task.get("Key") == "RefreshLibrary"
+                and task.get("State") in ("Running", "Cancelling")
+                for task in self.request("/ScheduledTasks", token=self.admin)
+            )
+
+        self.wait(idle)
+        if name is not None:
+            # Adding a folder can cancel an existing scan. Do not also ask it
+            # to start one: an immediate second refresh can cancel that scan
+            # without scheduling a replacement (observed on Jellyfin 12.1).
+            self.request(
+                "/Library/VirtualFolders?name=" + urllib.parse.quote(name, safe="")
+                + "&collectionType=movies&paths=%2Fmedia&refreshLibrary=false",
+                {}, self.admin, expected=204,
+            )
+            self.wait(idle)
+        self.request("/Library/Refresh", {}, self.admin, expected=204)
+
     def __enter__(self):
         try:
             self.restore = run(
@@ -102,7 +128,7 @@ class Instance:
                 probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 probe.bind(("127.0.0.1", 18096))
             for part in ["config", "cache", "media"]:
-                (self.data / part).mkdir(parents=True)
+                (self.data / part).mkdir(parents=True, exist_ok=getattr(self, 'resume_scaffold', False))
             # Test-only non-root service identity; persisted config/cache remain outside Git.
             service_uid = os.getuid() or 1000
             for part in ["config", "cache"]:
@@ -111,7 +137,7 @@ class Instance:
                 ROOT / "src/Jellyfin.Plugin.Danmuku/Jellyfin.Plugin.Danmuku.csproj"
             ).findtext(".//Version")
             with zipfile.ZipFile(
-                ROOT / f"artifacts/jellyfin-plugin-danmuku-{version}.zip"
+                self.package_path or (Path(os.environ.get("FORGE_PACKAGE_DIR", ROOT / "artifacts")) / f"jellyfin-plugin-danmuku-{version}.zip")
             ) as z:
                 z.extractall(self.data / "config/plugins/Danmuku")
             media = ROOT / "artifacts/m1/synthetic.mp4"
@@ -157,16 +183,18 @@ class Instance:
                     "copy",
                     str(media),
                 )
-            (self.data / "media/Synthetic.mp4").symlink_to(
-                media
-            )  # replaced with direct read-only bind below
+            media_link = self.data / "media/Synthetic.mp4"
+            if not media_link.is_symlink():
+                media_link.symlink_to(media)  # direct read-only bind below
+            else:
+                check(media_link.resolve() == media.resolve(), 'unexpected fixture media link')
             entry = self.data / "entry"
             run(
                 "python3",
                 str(ROOT / "build/web-entry.py"),
                 "prepare",
                 "--image",
-                "jellyfin/jellyfin:12.1",
+                "jellyfin/jellyfin:12.4",
                 "--web-path",
                 "/jellyfin/jellyfin-web",
                 "--base-url",
@@ -187,11 +215,9 @@ class Instance:
                     self.data / "config/config/network.xml", service_uid, os.getgid()
                 )
             service = {
-                "image": "jellyfin/jellyfin:12.1",
+                "image": "jellyfin/jellyfin:12.4",
                 "user": f"{service_uid}:{os.getgid()}",
-                "cpus": 1,
-                "mem_limit": "1g",
-                "environment": {"DOTNET_PROCESSOR_COUNT": "1"},
+                **compose_limits(),
                 "ports": ["127.0.0.1:18096:8096"],
                 "volumes": [
                     f"{self.data}/config:/config",
@@ -199,6 +225,7 @@ class Instance:
                     f"{media}:/media/Synthetic.mp4:ro",
                     *[f"{media}:/media/{name}:ro" for name in self.additional_media_names],
                     f"{entry}/current/index.html:/jellyfin/jellyfin-web/index.html:ro",
+                    *self.additional_volumes,
                 ],
             }
             (self.data / "compose.json").write_text(
@@ -218,7 +245,7 @@ class Instance:
                 expected=204,
             )
             self.wait(lambda: self.request("/Startup/User"))
-            self.password = secrets.token_urlsafe(24)
+            self.password = getattr(self, 'password', None) or secrets.token_urlsafe(24)
             self.request(
                 "/Startup/User",
                 {"Name": "m1-admin", "Password": self.password},
@@ -234,17 +261,7 @@ class Instance:
             )
             self.admin = login["AccessToken"]
             self.admin_id = login["User"]["Id"]
-            # Startup can already be scanning an empty root. A refresh requested
-            # during that scan is coalesced and can miss the newly added folder.
-            self.wait(lambda: not any(t.get("Key") == "RefreshLibrary" and t.get("State") in ("Running", "Cancelling")
-                                     for t in self.request("/ScheduledTasks", token=self.admin)))
-            self.request(
-                "/Library/VirtualFolders?name=M1&collectionType=movies&paths=%2Fmedia&refreshLibrary=true",
-                {},
-                self.admin,
-                expected=204,
-            )
-            self.request("/Library/Refresh", {}, self.admin, expected=204)
+            self.scan_library("M1")
             self.item = self.wait(
                 lambda: next(
                     iter(
@@ -342,7 +359,7 @@ class Instance:
             tool,
             "verify",
             "--image",
-            "jellyfin/jellyfin:12.1",
+            "jellyfin/jellyfin:12.4",
             "--base-url",
             self.prefix or "/",
             "--output",
@@ -355,7 +372,7 @@ class Instance:
             tool,
             "prepare",
             "--image",
-            "jellyfin/jellyfin:12.1",
+            "jellyfin/jellyfin:12.4",
             "--web-path",
             "/jellyfin/jellyfin-web",
             "--base-url",
@@ -375,7 +392,7 @@ class Instance:
                 tool,
                 "prepare",
                 "--image",
-                "jellyfin/jellyfin:12.1",
+                "jellyfin/jellyfin:12.4",
                 "--web-path",
                 "/jellyfin/jellyfin-web",
                 "--base-url",
@@ -401,7 +418,7 @@ class Instance:
             .replace(b"</head>", b'<meta name="m1-upgrade-probe" content="1"></head>')
         )
         (upgrade / "Dockerfile").write_text(
-            "FROM jellyfin/jellyfin:12.1\nCOPY index.html /jellyfin/jellyfin-web/index.html\n"
+            "FROM jellyfin/jellyfin:12.4\nCOPY index.html /jellyfin/jellyfin-web/index.html\n"
         )
         image = self.project + "-entry-upgrade"
         run("docker", "build", "-t", image, str(upgrade), capture_output=True)
@@ -443,7 +460,7 @@ class Instance:
                 tool,
                 "prepare",
                 "--image",
-                "jellyfin/jellyfin:12.1",
+                "jellyfin/jellyfin:12.4",
                 "--web-path",
                 "/jellyfin/jellyfin-web",
                 "--base-url",
@@ -452,7 +469,7 @@ class Instance:
                 str(entry),
                 capture_output=True,
             )
-            compose["services"]["jellyfin"]["image"] = "jellyfin/jellyfin:12.1"
+            compose["services"]["jellyfin"]["image"] = "jellyfin/jellyfin:12.4"
             compose_path.write_text(json.dumps(compose))
             run(*self.command, "up", "-d", "--force-recreate", capture_output=True)
             self.wait(lambda: self.request("/Plugins", token=self.admin))
@@ -507,7 +524,7 @@ class Instance:
             tool,
             "prepare",
             "--image",
-            "jellyfin/jellyfin:12.1",
+            "jellyfin/jellyfin:12.4",
             "--web-path",
             "/jellyfin/jellyfin-web",
             "--base-url",
